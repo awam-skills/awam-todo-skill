@@ -21,9 +21,17 @@ awam-todo —— 输入与管理 To-Do 的实现脚本。
   python todo.py done T-20261002-001
   python todo.py start T-20261002-001
   python todo.py reopen T-20261002-001
+  python todo.py dep T-20261002-001 --add T-20261002-003   # 设置依赖链
+  python todo.py dep T-20261002-001                        # 查看依赖
   python todo.py archive 2026-10-01
   python todo.py show T-20261002-001
   python todo.py index --rebuild
+
+依赖链说明：
+  - 通过 `dep`（或 `add --deps`）为任务标记前置依赖（任务 ID，用 ; 分隔）。
+  - 依赖硬检查是死的：目标状态推进到「进行中/结束」时，若前置依赖未全部结束，
+    脚本拒绝（exit 3）并列出冲突，提示 AI 向用户确认；用户确认后由 AI 以 --force 强制推进。
+  - 设置依赖时会做存在性校验与循环依赖检测，成环/引用不存在任务直接报错。
 """
 
 import argparse
@@ -253,7 +261,7 @@ def _parse_from(v):
 def _parse_block(block_lines):
     """解析一个任务的 key: value 行列表为 dict。"""
     task = {"id": None, "status": DEFAULT_STATUS, "importance": DEFAULT_IMPORTANCE, "text": "",
-            "note": "", "workspace": "", "docs": [], "links": [], "due": None,
+            "note": "", "workspace": "", "docs": [], "links": [], "depends_on": [], "due": None,
             "created": None, "updated": None, "urgent": DEFAULT_URGENT, "from": None}
     for line in block_lines:
         line = line.strip()
@@ -275,6 +283,8 @@ def _parse_block(block_lines):
             task["docs"] = [x.strip() for x in v.split(";") if x.strip()]
         elif k == "链接":
             task["links"] = [x.strip() for x in v.split(";") if x.strip()]
+        elif k == "依赖":
+            task["depends_on"] = [x.strip() for x in v.split(";") if x.strip()]
         elif k == "来源":
             task["from"] = _parse_from(v)
         elif k == "截止":
@@ -348,6 +358,8 @@ def _write_block(t):
         lines.append("文档: %s" % "; ".join(t["docs"]))
     if t.get("links"):
         lines.append("链接: %s" % "; ".join(t["links"]))
+    if t.get("depends_on"):
+        lines.append("依赖: %s" % "; ".join(t["depends_on"]))
     if t.get("from") and (t["from"].get("type") or t["from"].get("url")):
         lines.append("来源: %s|%s" % (t["from"].get("type") or "",
                                       t["from"].get("url") or ""))
@@ -450,6 +462,7 @@ def build_index(now=None):
                 "status": t["status"], "due": t["due"], "file": date,
                 "created": t.get("created"), "urgent": bool(_is_urgent(t, now)),
                 "workspace": t.get("workspace"), "links": t.get("links"),
+                "depends_on": t.get("depends_on"), "blocked": _has_unfinished_deps(t),
                 "from": t.get("from"),
             }
             if t["status"] == "结束":
@@ -593,6 +606,11 @@ def _apply_task_fields(task, args, now, *, is_new):
     elif is_new:
         task["links"] = []
 
+    if args.deps is not None:
+        task["depends_on"] = _split_list_field(args.deps)
+    elif is_new:
+        task["depends_on"] = []
+
     if args.due is not None:
         task["due"] = parse_due(args.due, now) if args.due else None
     elif is_new:
@@ -629,6 +647,8 @@ def _print_task_summary(prefix, tid, date, task, idx):
         print("  文档: %s" % "; ".join(task["docs"]))
     if task.get("links"):
         print("  链接: %s" % "; ".join(task["links"]))
+    if task.get("depends_on"):
+        print("  依赖: %s" % "; ".join(task["depends_on"]))
     if task.get("from") and task["from"].get("url"):
         print("  来源: %s | %s" % (task["from"].get("type"), task["from"].get("url")))
     print("  索引已更新：todo=%d in_progress=%d urgent=%d" % (
@@ -643,6 +663,21 @@ def _update_existing_task(tid, args, now):
         return 2
     old_status = t.get("status")
     _apply_task_fields(t, args, now, is_new=False)
+    # 依赖校验：存在性 + 自依赖 + 环
+    deps = t.get("depends_on") or []
+    missing = _missing_deps(deps)
+    if missing:
+        print("错误：以下依赖任务不存在：%s" % "; ".join(missing), file=sys.stderr)
+        return 2
+    if tid in deps:
+        print("错误：任务不能依赖自身（%s）。" % tid, file=sys.stderr)
+        return 2
+    if _would_create_cycle(tid, deps):
+        print("错误：该依赖设置会形成循环依赖（%s 间接依赖自身）。" % tid, file=sys.stderr)
+        return 2
+    rc = _guard_by_deps(deps, t["status"], args.force)
+    if rc != 0:
+        return rc
     all_done = all(x["status"] == "结束" for x in data["tasks"])
     data["archived"] = all_done
     save_file(date, data["archived"], data["tasks"])
@@ -697,10 +732,18 @@ def cmd_add(args, now=None):
     task = {
         "id": tid, "status": DEFAULT_STATUS, "importance": DEFAULT_IMPORTANCE,
         "text": text, "note": "", "workspace": "", "docs": [], "links": [],
-        "due": None, "created": None, "updated": None, "urgent": DEFAULT_URGENT,
-        "from": None,
+        "depends_on": [], "due": None, "created": None, "updated": None,
+        "urgent": DEFAULT_URGENT, "from": None,
     }
     _apply_task_fields(task, args, now, is_new=True)
+    # 新任务的依赖校验：存在性 + 硬检查（新建即以 进行中/结束 起步时同样受依赖约束）
+    missing = _missing_deps(task.get("depends_on") or [])
+    if missing:
+        print("错误：以下依赖任务不存在：%s" % "; ".join(missing), file=sys.stderr)
+        return 2
+    rc = _guard_by_deps(task.get("depends_on"), task["status"], args.force)
+    if rc != 0:
+        return rc
     data["tasks"].append(task)
     save_file(date, data["archived"], data["tasks"])
     idx = build_index(now)
@@ -733,11 +776,146 @@ def _find_task(tid):
     return None, None, None
 
 
-def _set_status(tid, status):
+# ---- 依赖链 ---------------------------------------------------------------
+def _all_tasks_map():
+    """id -> (date, data, task) 全表，用于批量存在性/环检测。"""
+    m = {}
+    for date, data in _scan_files().items():
+        for t in data["tasks"]:
+            m[t["id"]] = (date, data, t)
+    return m
+
+
+def _missing_deps(dep_ids):
+    """返回依赖列表中不存在的任务 ID。"""
+    allmap = _all_tasks_map()
+    return [d for d in dep_ids if d not in allmap]
+
+
+def _would_create_cycle(root_id, new_dep_ids):
+    """沿「依赖」正向传播：若任一新依赖能（间接）到达 root，则新增会成环。"""
+    allmap = _all_tasks_map()
+
+    def forward(start):
+        t = allmap.get(start)
+        if not t:
+            return ()
+        return t[2].get("depends_on") or ()
+
+    for nd in new_dep_ids:
+        seen = set()
+        stack = list(forward(nd))
+        while stack:
+            cur = stack.pop()
+            if cur in seen:
+                continue
+            seen.add(cur)
+            if cur == root_id:
+                return True
+            stack.extend(forward(cur))
+    return False
+
+
+def _has_unfinished_deps(t):
+    """任务 t 是否存在未结束（或不存在）的直接依赖。"""
+    for did in t.get("depends_on") or []:
+        _, _, dtask = _find_task(did)
+        if dtask is None or dtask["status"] != "结束":
+            return True
+    return False
+
+
+def _guard_by_deps(dep_ids, target_status, force):
+    """依赖硬检查（死的规则）：target_status 为「进行中/结束」且存在未结束的直接依赖时，
+    拒绝推进并返回 EXIT_NEEDS_CONFIRM（exit 3），由会话中的 AI 向用户确认后决定是否 --force。
+    force=True 或目标状态非推进态（待开始/维护/其他）时不拦截。返回 0=通过。"""
+    if force or target_status not in ("进行中", "结束"):
+        return 0
+    conflicts = []
+    for did in dep_ids or []:
+        ddate, _, dtask = _find_task(did)
+        if dtask is None:
+            conflicts.append({"id": did, "status": "(不存在)", "text": "", "date": ""})
+        elif dtask["status"] != "结束":
+            conflicts.append({"id": did, "status": dtask["status"], "text": dtask["text"], "date": ddate})
+    if conflicts:
+        print("依赖检查未通过（前置依赖尚未结束，不能推进到「%s」）：" % target_status)
+        for c in conflicts:
+            print("  - %s [%s] %s %s" % (c["id"], c["status"], c["date"], c["text"]))
+        print("提示：如需强行推进请加 --force（由会话中的 AI 在用户确认后调用）；"
+              "或先处理未完成的依赖任务。")
+        return EXIT_NEEDS_CONFIRM
+    return 0
+
+
+def cmd_dep(args):
+    """设置 / 查看任务依赖。模式：
+      dep <id>               查看
+      dep <id> A B ...       设置（替换）依赖
+      dep <id> --add A B     追加依赖
+      dep <id> --remove A B  移除依赖
+      dep <id> --clear       清空依赖
+    任何改动都会做存在性校验与循环依赖检测。"""
+    date, data, t = _find_task(args.id)
+    if t is None:
+        print("未找到任务 %s" % args.id, file=sys.stderr)
+        return 2
+
+    deps = list(t.get("depends_on") or [])
+    if args.deps:
+        deps = list(args.deps)
+    elif args.add:
+        deps.extend(args.add)
+    if args.remove:
+        rm = set(args.remove)
+        deps = [d for d in deps if d not in rm]
+    if args.clear:
+        deps = []
+    # 去重保序
+    uniq, seen = [], set()
+    for d in deps:
+        if d not in seen:
+            seen.add(d)
+            uniq.append(d)
+    deps = uniq
+
+    missing = _missing_deps(deps)
+    if missing:
+        print("错误：以下依赖任务不存在：%s" % "; ".join(missing), file=sys.stderr)
+        return 2
+    if args.id in deps:
+        print("错误：任务不能依赖自身（%s）。" % args.id, file=sys.stderr)
+        return 2
+    if _would_create_cycle(args.id, deps):
+        print("错误：该依赖设置会形成循环依赖（%s 间接依赖自身）。" % args.id, file=sys.stderr)
+        return 2
+
+    changed = deps != (t.get("depends_on") or [])
+    if changed:
+        t["depends_on"] = deps
+        t["updated"] = _fmt(dt.datetime.now())
+        data["archived"] = all(x["status"] == "结束" for x in data["tasks"])
+        save_file(date, data["archived"], data["tasks"])
+        build_index()
+
+    print("%s 依赖（%d 条）：" % (args.id, len(deps)))
+    for did in deps:
+        ddate, _, dtask = _find_task(did)
+        print("  - %s [%s] %s %s" % (did, dtask["status"] if dtask else "(不存在)",
+                                     ddate, dtask["text"] if dtask else ""))
+    if not deps:
+        print("  （无依赖）")
+    return 0
+
+
+def _set_status(tid, status, force=False):
     date, data, t = _find_task(tid)
     if t is None:
         print("未找到任务 %s" % tid, file=sys.stderr)
         return 2
+    rc = _guard_by_deps(t.get("depends_on"), status, force)
+    if rc != 0:
+        return rc
     t["status"] = status
     t["updated"] = _fmt(dt.datetime.now())
     # 归档不变量：归档 ⇔ 该文件所有任务均为 结束
@@ -777,6 +955,9 @@ def cmd_work(args):
     if t is None:
         print("未找到任务 %s" % args.id, file=sys.stderr)
         return 2
+    rc = _guard_by_deps(t.get("depends_on"), "进行中", args.force)
+    if rc != 0:
+        return rc
     t["status"] = "进行中"
     t["updated"] = _fmt(dt.datetime.now())
     all_done = all(x["status"] == "结束" for x in data["tasks"])
@@ -803,11 +984,11 @@ def cmd_work(args):
 
 
 def cmd_done(args):
-    return _set_status(args.id, "结束")
+    return _set_status(args.id, "结束", args.force)
 
 
 def cmd_start(args):
-    return _set_status(args.id, "进行中")
+    return _set_status(args.id, "进行中", args.force)
 
 
 def cmd_reopen(args):
@@ -858,6 +1039,9 @@ def cmd_list(args, now=None):
                             t["due"] or "无截止", t["status"]))
             if t.get("note"):
                 lines.append("   备注: %s" % t["note"])
+            if t.get("depends_on"):
+                blocked = "（被依赖阻塞）" if _has_unfinished_deps(t) else ""
+                lines.append("   依赖: %s%s" % ("; ".join(t["depends_on"]), blocked))
             if t.get("workspace"):
                 lines.append("   工作空间: %s" % t["workspace"])
             if t.get("links"):
@@ -1008,6 +1192,7 @@ def main():
     pa.add_argument("--workspace", default=None)
     pa.add_argument("--docs", default=None, help="相关文档，用 ; 分隔")
     pa.add_argument("--links", default=None, help="链接，用 ; 分隔")
+    pa.add_argument("--deps", default=None, help="依赖任务ID，用 ; 分隔（如 T-A;T-B）")
     pa.add_argument("--due", default=None, help="自然语言时间，如 明天 / 星期五 / 2026-10-05 10:00")
     pa.add_argument("--date", default="", help="存储到指定日期文件 YYYY-MM-DD，默认今天")
     pa.add_argument("--from-type", default="agent", help="来源类型，如 agent/link/web（默认 agent）")
@@ -1019,14 +1204,23 @@ def main():
     pc.add_argument("--text", required=True)
     pc.add_argument("--exclude-id", default="", help="比对时排除的任务 ID")
 
-    pd = sub.add_parser("done", help="完成任务（全部完成则自动归档该文件）")
+    pd = sub.add_parser("done", help="完成任务（全部完成则自动归档该文件；前置依赖未结束需确认）")
     pd.add_argument("id")
-    ps = sub.add_parser("start", help="标记进行中")
+    pd.add_argument("--force", action="store_true", help="忽略前置依赖未完成的硬检查，强制完成")
+    ps = sub.add_parser("start", help="标记进行中（前置依赖未结束需确认）")
     ps.add_argument("id")
-    pw = sub.add_parser("work", aliases=["continue"], help="继续待办：标记进行中并用 Cursor 打开工作区")
+    ps.add_argument("--force", action="store_true", help="忽略前置依赖未完成的硬检查，强制进行")
+    pw = sub.add_parser("work", aliases=["continue"], help="继续待办：标记进行中并用 Cursor 打开工作区（前置依赖未结束需确认）")
     pw.add_argument("id")
+    pw.add_argument("--force", action="store_true", help="忽略前置依赖未完成的硬检查，强制进行")
     pr = sub.add_parser("reopen", help="重新打开")
     pr.add_argument("id")
+    pdep = sub.add_parser("dep", help="设置 / 查看任务依赖（含存在性与环检测）")
+    pdep.add_argument("id")
+    pdep.add_argument("deps", nargs="*", help="设置（替换）依赖任务ID列表")
+    pdep.add_argument("--add", nargs="+", default=[], help="追加依赖任务ID")
+    pdep.add_argument("--remove", nargs="+", default=[], help="移除依赖任务ID")
+    pdep.add_argument("--clear", action="store_true", help="清空依赖")
     par = sub.add_parser("archive", help="强制归档某个日期文件（须全部完成）")
     par.add_argument("date")
     pl = sub.add_parser("list", help="列出任务")
@@ -1055,6 +1249,7 @@ def main():
         "start": lambda a: cmd_start(a),
         "work": lambda a: cmd_work(a),
         "reopen": lambda a: cmd_reopen(a),
+        "dep": lambda a: cmd_dep(a),
         "archive": lambda a: cmd_archive(a),
         "list": lambda a: cmd_list(a),
         "show": lambda a: cmd_show(a),

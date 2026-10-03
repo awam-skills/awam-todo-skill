@@ -3,6 +3,8 @@
 storage/
 # 索引文件：由脚本自动维护
 index.json
+# 环境信息：由 init 命令按本机探测生成（跨机器不同）
+env.json
 
 # Python
 __pycache__/

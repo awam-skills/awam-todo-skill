@@ -11,12 +11,15 @@ description: >-
 # awam-todo（输入与管理 To-Do）
 
 个人待办管理技能。所有数据落在本技能目录下的 `storage/`（**不纳入 Git 管理**），索引在
-`index.json`（**不纳入 Git 管理**）。核心命令见 `scripts/todo.py`（Python 3）。
+`index.json`（**不纳入 Git 管理**），本机环境信息在 `env.json`（**不纳入 Git 管理**，
+由 `init` 自动生成）。核心命令见 `scripts/todo.py`（Python 3）。
 
 ## 何时用
 
 | 用户意图 | 执行 |
 |----------|------|
+| 首次使用 / 换机器后初始化环境 | `init`（识别工作环境并保存，统一工作空间） |
+| 查看 / 修改环境配置（路径风格等） | `env`（可 `--set`、`--reformat-workspaces`） |
 | 新增一条待办 | 解析 → `add`（含重复检测，见下） |
 | 检查是否重复 | `check --text "..."`（只读） |
 | 查看待办 | `list`（可按状态/日期筛选） |
@@ -32,6 +35,54 @@ description: >-
 ```powershell
 python "C:\Users\Administrator\.agents\skills\awam-todo\scripts\todo.py" <命令> <参数>
 ```
+
+## 工作环境识别与路径统一（必读）
+
+`awam-todo` 会自动识别运行环境，并把**工作空间（workspace）路径**统一为一致的格式。
+
+### `init` —— 识别并保存工作环境
+
+首次使用或更换机器后，先运行 `init`：
+
+```powershell
+python ...\todo.py init
+```
+
+它探测当前工作环境并保存到 `env.json`：
+
+| 字段 | 说明 |
+|------|------|
+| `path_style` | 路径风格：`windows` / `posix` / `mixed`（自动按 OS 判定，Windows→windows） |
+| `platform.os` | 操作系统名（Windows / Linux / Darwin …） |
+| `platform.is_windows` | 是否 Windows |
+| `platform.python_version` | Python 版本 |
+| `platform.hostname` / `platform.cwd` | 主机名 / 当前工作目录 |
+| `dirs.skill_dir` / `dirs.storage_dir` | 技能目录 / 存储目录 |
+
+`init` 还会把**已有存储文件中的工作空间**统一为当前 `path_style` 的格式（如 Windows 下全部转成
+`G:\Projects\...` 反斜杠）。
+
+### Windows 路径统一规则（本机为 Windows 时自动生效）
+
+- **保存（落盘）**：新增待办时，`--workspace` 无论传入正斜杠还是反斜杠，都会统一为
+  `G:\Projects\...`（反斜杠）格式后写入存储文件。
+- **读取 / 输出**：`list` / `show` / `index` / `add` 汇报时，工作空间一律以 Windows 反斜杠格式展示。
+- **只影响工作空间**：`--docs`、`--links`（URL）等不做路径转换。
+- 判断标准是 `env.json` 的 `path_style`；未初始化时按当前 OS 推断（Windows→windows）。
+
+### `env` —— 查看 / 修改环境配置
+
+```powershell
+python ...\todo.py env                                  # 查看当前环境配置
+python ...\todo.py env --set path_style=windows         # 修改路径风格（windows/posix/mixed）
+python ...\todo.py env --reset                          # 重新探测环境并覆盖保存
+python ...\todo.py env --set path_style=posix --reformat-workspaces
+                                                         # 改风格并同步重写全部工作空间
+```
+
+- `--set` 当前仅支持 `path_style`（`windows` / `posix` / `mixed`）。
+- `--reformat-workspaces`：把全部存储文件中的工作空间统一为当前 `path_style`（可配合改风格使用）。
+- 修改即写回 `env.json`；改风格后可重跑 `init` 或直接 `--reformat-workspaces` 让存量数据同步。
 
 ## 会话中解析（新增待办的核心步骤）
 

@@ -37,6 +37,7 @@ from difflib import SequenceMatcher
 SKILL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STORAGE_DIR = os.path.join(SKILL_DIR, "storage")
 INDEX_PATH = os.path.join(SKILL_DIR, "index.json")
+ENV_PATH = os.path.join(SKILL_DIR, "env.json")
 
 STATUS_MARKS = {"维护": "[ ]", "进行中": "[~]", "结束": "[x]", "待开始": "[ ]", "其他": "[ ]"}
 STATUS_SET = set(STATUS_MARKS.keys())
@@ -163,6 +164,75 @@ def _fmt(d):
     return d.strftime("%Y-%m-%d %H:%M") if isinstance(d, dt.datetime) else d.strftime("%Y-%m-%d")
 
 
+# ---- 工作环境识别与路径统一 ------------------------------------------------
+# env.json 保存运行时环境与路径风格偏好；首次由 `init` 生成，`env` 命令查看/修改。
+# 路径风格：
+#   windows -> 工作空间统一为反斜杠 `G:\Projects\...`
+#   posix   -> 工作空间统一为正斜杠 `G:/Projects/...`
+#   mixed   -> 保持录入原样，不做转换
+_PATH_STYLES = ("windows", "posix", "mixed")
+
+
+def _detect_env():
+    """探测当前运行环境，返回环境信息 dict（不落盘）。"""
+    import platform
+    import socket
+    is_windows = os.name == "nt"
+    default_style = "windows" if is_windows else "posix"
+    return {
+        "generated": _fmt(dt.datetime.now()),
+        "path_style": default_style,
+        "platform": {
+            "os": platform.system() or ("Windows" if is_windows else "Unknown"),
+            "os_name": os.name,
+            "is_windows": is_windows,
+            "path_sep": os.sep,
+            "python_version": platform.python_version(),
+            "hostname": socket.gethostname() if hasattr(socket, "gethostname") else "",
+            "cwd": os.getcwd(),
+        },
+        "dirs": {"skill_dir": SKILL_DIR, "storage_dir": STORAGE_DIR},
+    }
+
+
+def _load_env():
+    """读取已保存的环境配置；不存在时按当前 OS 推断（不落盘）。"""
+    if os.path.exists(ENV_PATH):
+        try:
+            with open(ENV_PATH, "r", encoding="utf-8") as f:
+                env = json.load(f)
+            if isinstance(env, dict) and env.get("path_style") in _PATH_STYLES:
+                return env
+        except Exception:
+            pass
+    env = _detect_env()
+    env["_inferred"] = True
+    return env
+
+
+def _save_env(env):
+    os.makedirs(SKILL_DIR, exist_ok=True)
+    with open(ENV_PATH, "w", encoding="utf-8") as f:
+        json.dump(env, f, ensure_ascii=False, indent=2)
+
+
+def _get_path_style():
+    return _load_env().get("path_style") or ("windows" if os.name == "nt" else "posix")
+
+
+def _norm_path(p):
+    """按当前 path_style 统一本地路径分隔符（仅用于工作空间等本地路径，不用于 URL）。"""
+    p = _norm(p)
+    if not p:
+        return p
+    style = _get_path_style()
+    if style == "windows":
+        return p.replace("/", "\\")
+    if style == "posix":
+        return p.replace("\\", "/")
+    return p
+
+
 # ---- 存储文件读写 ---------------------------------------------------------
 def _file_path(date):
     """date 为 'YYYY-MM-DD'。返回存储文件绝对路径。"""
@@ -200,7 +270,7 @@ def _parse_block(block_lines):
         elif k == "备注":
             task["note"] = v
         elif k == "工作空间":
-            task["workspace"] = v
+            task["workspace"] = _norm_path(v)
         elif k == "文档":
             task["docs"] = [x.strip() for x in v.split(";") if x.strip()]
         elif k == "链接":
@@ -509,7 +579,7 @@ def _apply_task_fields(task, args, now, *, is_new):
         task["note"] = ""
 
     if args.workspace is not None:
-        task["workspace"] = _norm(args.workspace)
+        task["workspace"] = _norm_path(args.workspace)
     elif is_new:
         task["workspace"] = ""
 
@@ -831,6 +901,99 @@ def cmd_index(args):
     return 0
 
 
+def _reformat_all_workspaces(style):
+    """按指定路径风格重写全部存储文件中的工作空间，返回改动文件数。
+
+    注意：这里直接操作存储文件原文（不经 load_file 的读取期规范化），
+    以确保落盘内容真正统一为指定风格，而不仅是读取时归一化。"""
+    if style not in ("windows", "posix"):
+        return 0
+    if not os.path.isdir(STORAGE_DIR):
+        return 0
+    changed = 0
+    for fn in sorted(os.listdir(STORAGE_DIR)):
+        if not fn.endswith(".md"):
+            continue
+        date = fn[:-3]
+        try:
+            dt.datetime.strptime(date, "%Y-%m-%d")
+        except ValueError:
+            continue
+        fp = os.path.join(STORAGE_DIR, fn)
+        with open(fp, "r", encoding="utf-8") as f:
+            raw = f.read()
+        new_raw = _reformat_workspace_lines(raw, style)
+        if new_raw != raw:
+            with open(fp, "w", encoding="utf-8") as f:
+                f.write(new_raw)
+            changed += 1
+    if changed:
+        build_index()
+    return changed
+
+
+def _reformat_workspace_lines(raw, style):
+    """把存储文件文本中所有 `工作空间: <path>` 行的分隔符统一为指定风格。"""
+    if style == "windows":
+        return re.sub(r"^(工作空间:\s*)(.+)$",
+                      lambda m: m.group(1) + m.group(2).replace("/", "\\"),
+                      raw, flags=re.M)
+    return re.sub(r"^(工作空间:\s*)(.+)$",
+                  lambda m: m.group(1) + m.group(2).replace("\\", "/"),
+                  raw, flags=re.M)
+
+
+def cmd_init(args):
+    """识别当前工作环境并保存到 env.json，同时把已有工作空间统一为当前路径风格。"""
+    env = _detect_env()
+    _save_env(env)
+    n = _reformat_all_workspaces(env["path_style"])
+    print("已识别并保存工作环境 -> %s" % ENV_PATH)
+    print(json.dumps(env, ensure_ascii=False, indent=2))
+    if n:
+        print("已将 %d 个存储文件中的工作空间统一为 %s 格式" % (n, env["path_style"]))
+    else:
+        print("工作空间已统一为 %s 格式" % env["path_style"])
+    return 0
+
+
+def cmd_env(args):
+    """查看 / 修改已保存的环境配置。--set KEY=VALUE 可多次；--reset 重新探测。"""
+    env = _load_env()
+    if args.reset:
+        env = _detect_env()
+    for kv in args.set or []:
+        if "=" not in kv:
+            print("错误：--set 需为 KEY=VALUE 形式，例如 path_style=windows", file=sys.stderr)
+            return 2
+        k, _, v = kv.partition("=")
+        k, v = k.strip(), v.strip()
+        if k == "path_style":
+            if v not in _PATH_STYLES:
+                print("错误：path_style 仅支持 %s" % " / ".join(_PATH_STYLES), file=sys.stderr)
+                return 2
+            env["path_style"] = v
+        else:
+            print("错误：不支持的配置键 %s（当前仅支持 path_style）" % k, file=sys.stderr)
+            return 2
+    if args.reset or args.set:
+        env["updated"] = _fmt(dt.datetime.now())
+        _save_env(env)
+    reformat_n = 0
+    if args.reformat_workspaces:
+        reformat_n = _reformat_all_workspaces(env.get("path_style"))
+    out = {k: v for k, v in env.items() if not k.startswith("_")}
+    print(json.dumps(out, ensure_ascii=False, indent=2))
+    if args.reformat_workspaces:
+        if reformat_n:
+            print("已将 %d 个存储文件中的工作空间统一为 %s 格式" % (reformat_n, env["path_style"]))
+        else:
+            print("工作空间已统一为 %s 格式" % env["path_style"])
+    elif env.get("_inferred"):
+        print("（提示：环境配置尚未保存，可运行 `init` 命令识别并保存。）")
+    return 0
+
+
 def main():
     p = argparse.ArgumentParser(prog="awam-todo", description="输入与管理 To-Do")
     sub = p.add_subparsers(dest="cmd")
@@ -874,6 +1037,13 @@ def main():
     pi = sub.add_parser("index", help="查看/重建索引")
     pi.add_argument("--rebuild", action="store_true")
 
+    pinit = sub.add_parser("init", help="识别工作环境并保存到 env.json（含路径风格，统一工作空间）")
+    penv = sub.add_parser("env", help="查看 / 修改已保存的环境配置")
+    penv.add_argument("--set", action="append", default=[], help="KEY=VALUE，可多次；当前支持 path_style=windows|posix|mixed")
+    penv.add_argument("--reset", action="store_true", help="重新探测环境并覆盖保存")
+    penv.add_argument("--reformat-workspaces", action="store_true",
+                      help="将全部存储文件中的工作空间统一为当前 path_style")
+
     args = p.parse_args()
     if not args.cmd:
         p.print_help()
@@ -889,6 +1059,8 @@ def main():
         "list": lambda a: cmd_list(a),
         "show": lambda a: cmd_show(a),
         "index": lambda a: cmd_index(a),
+        "init": lambda a: cmd_init(a),
+        "env": lambda a: cmd_env(a),
     }
     return handlers[args.cmd](args)
 

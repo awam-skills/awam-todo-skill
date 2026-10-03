@@ -1,5 +1,6 @@
 ---
 name: awam-todo
+version: 0.0.1
 description: >-
   输入与管理 Awam 的 To-Do：在会话中解析用户自然语言里的待办内容、重要性、备注、工作空间目录、
   相关文档、链接与时间，调用脚本追加到按日期划分的存储文件，并自动维护索引（todo / in_progress /

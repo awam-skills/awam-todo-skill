@@ -23,6 +23,9 @@ awam-todo —— 输入与管理 To-Do 的实现脚本。
   python todo.py reopen T-20261002-001
   python todo.py dep T-20261002-001 --add T-20261002-003   # 设置依赖链
   python todo.py dep T-20261002-001                        # 查看依赖
+  python todo.py add --text "子任务" --parent T-20261002-001   # 新增子任务（归属于主任务）
+  python todo.py children T-20261002-001                   # 列出某主任务下的子任务
+  python todo.py deparent T-20261002-003                   # 解除子任务归属
   python todo.py archive 2026-10-01
   python todo.py show T-20261002-001
   python todo.py index --rebuild
@@ -32,6 +35,12 @@ awam-todo —— 输入与管理 To-Do 的实现脚本。
   - 依赖硬检查是死的：目标状态推进到「进行中/结束」时，若前置依赖未全部结束，
     脚本拒绝（exit 3）并列出冲突，提示 AI 向用户确认；用户确认后由 AI 以 --force 强制推进。
   - 设置依赖时会做存在性校验与循环依赖检测，成环/引用不存在任务直接报错。
+
+子任务说明：
+  - 通过 `add --parent <主任务ID>` 新增子任务；子任务拥有与其他任务相同的全部属性。
+  - 父任务完成硬检查：把存在未完成子任务的任务标记为「结束」时，脚本拒绝（exit 3），
+    交由 AI 向用户确认后决定是否 --force 强制结束；子任务全部完成后父任务才能正常结束。
+  - 父子归属可嵌套但不得成环；`children <id>` 查看某主任务的子任务，`deparent <id>` 解除归属。
 """
 
 import argparse
@@ -262,7 +271,8 @@ def _parse_block(block_lines):
     """解析一个任务的 key: value 行列表为 dict。"""
     task = {"id": None, "status": DEFAULT_STATUS, "importance": DEFAULT_IMPORTANCE, "text": "",
             "note": "", "workspace": "", "docs": [], "links": [], "depends_on": [], "due": None,
-            "created": None, "updated": None, "urgent": DEFAULT_URGENT, "from": None}
+            "created": None, "updated": None, "urgent": DEFAULT_URGENT, "from": None,
+            "parent": ""}
     for line in block_lines:
         line = line.strip()
         if ":" not in line:
@@ -275,6 +285,8 @@ def _parse_block(block_lines):
             task["importance"] = _norm_importance(v)
         elif k == "内容":
             task["text"] = v
+        elif k == "父任务":
+            task["parent"] = v
         elif k == "备注":
             task["note"] = v
         elif k == "工作空间":
@@ -350,6 +362,8 @@ def _write_block(t):
     lines.append("重要: %s" % t["importance"])
     lines.append("紧急: %s" % t["urgent"])
     lines.append("内容: %s" % t["text"])
+    if t.get("parent"):
+        lines.append("父任务: %s" % t["parent"])
     if t.get("note"):
         lines.append("备注: %s" % t["note"])
     if t.get("workspace"):
@@ -463,6 +477,7 @@ def build_index(now=None):
                 "created": t.get("created"), "urgent": bool(_is_urgent(t, now)),
                 "workspace": t.get("workspace"), "links": t.get("links"),
                 "depends_on": t.get("depends_on"), "blocked": _has_unfinished_deps(t),
+                "parent": t.get("parent") or "",
                 "from": t.get("from"),
             }
             if t["status"] == "结束":
@@ -611,6 +626,11 @@ def _apply_task_fields(task, args, now, *, is_new):
     elif is_new:
         task["depends_on"] = []
 
+    if args.parent is not None:
+        task["parent"] = _norm(args.parent)
+    elif is_new:
+        task["parent"] = ""
+
     if args.due is not None:
         task["due"] = parse_due(args.due, now) if args.due else None
     elif is_new:
@@ -649,6 +669,8 @@ def _print_task_summary(prefix, tid, date, task, idx):
         print("  链接: %s" % "; ".join(task["links"]))
     if task.get("depends_on"):
         print("  依赖: %s" % "; ".join(task["depends_on"]))
+    if task.get("parent"):
+        print("  父任务: %s" % task["parent"])
     if task.get("from") and task["from"].get("url"):
         print("  来源: %s | %s" % (task["from"].get("type"), task["from"].get("url")))
     print("  索引已更新：todo=%d in_progress=%d urgent=%d" % (
@@ -676,6 +698,21 @@ def _update_existing_task(tid, args, now):
         print("错误：该依赖设置会形成循环依赖（%s 间接依赖自身）。" % tid, file=sys.stderr)
         return 2
     rc = _guard_by_deps(deps, t["status"], args.force)
+    if rc != 0:
+        return rc
+    # 父任务校验：存在性 + 自引用 + 环
+    parent = _norm(t.get("parent"))
+    if parent:
+        if _find_task(parent)[2] is None:
+            print("错误：父任务 %s 不存在。" % parent, file=sys.stderr)
+            return 2
+        if parent == tid:
+            print("错误：任务不能作为自身的父任务（%s）。" % tid, file=sys.stderr)
+            return 2
+        if _would_create_parent_cycle(tid, parent):
+            print("错误：该归属会形成循环（%s 成为 %s 的父任务会成环）。" % (parent, tid), file=sys.stderr)
+            return 2
+    rc = _guard_children_done(tid, t["status"], args.force)
     if rc != 0:
         return rc
     all_done = all(x["status"] == "结束" for x in data["tasks"])
@@ -733,7 +770,7 @@ def cmd_add(args, now=None):
         "id": tid, "status": DEFAULT_STATUS, "importance": DEFAULT_IMPORTANCE,
         "text": text, "note": "", "workspace": "", "docs": [], "links": [],
         "depends_on": [], "due": None, "created": None, "updated": None,
-        "urgent": DEFAULT_URGENT, "from": None,
+        "urgent": DEFAULT_URGENT, "from": None, "parent": "",
     }
     _apply_task_fields(task, args, now, is_new=True)
     # 新任务的依赖校验：存在性 + 硬检查（新建即以 进行中/结束 起步时同样受依赖约束）
@@ -744,6 +781,11 @@ def cmd_add(args, now=None):
     rc = _guard_by_deps(task.get("depends_on"), task["status"], args.force)
     if rc != 0:
         return rc
+    # 新任务的父任务校验：存在性（新建任务尚无父子环）
+    parent = _norm(task.get("parent"))
+    if parent and _find_task(parent)[2] is None:
+        print("错误：父任务 %s 不存在。" % parent, file=sys.stderr)
+        return 2
     data["tasks"].append(task)
     save_file(date, data["archived"], data["tasks"])
     idx = build_index(now)
@@ -848,6 +890,86 @@ def _guard_by_deps(dep_ids, target_status, force):
     return 0
 
 
+# ---- 子任务 ---------------------------------------------------------------
+def _children_of(pid):
+    """返回父任务 pid 的全部子任务 [(date, task), ...]。"""
+    return [(date, t) for date, _, t in _all_tasks_map().values()
+            if (t.get("parent") or "") == pid]
+
+
+def _would_create_parent_cycle(tid, parent_id):
+    """把 parent_id 设为 tid 的父任务时，沿父链上溯是否成环（或已存在环）。"""
+    allmap = _all_tasks_map()
+    cur, seen = parent_id, set()
+    while cur:
+        if cur == tid:
+            return True
+        if cur in seen:
+            return True
+        seen.add(cur)
+        t = allmap.get(cur)
+        cur = (t[2].get("parent") or "") if t else None
+    return False
+
+
+def _guard_children_done(tid, target_status, force):
+    """父任务完成硬检查：target_status 为「结束」且存在未完成的子任务时，拒绝并返回
+    EXIT_NEEDS_CONFIRM（exit 3），由 AI 向用户确认后决定是否 --force。返回 0=通过。"""
+    if force or target_status != "结束":
+        return 0
+    unfinished = [(date, t) for date, t in _children_of(tid) if t["status"] != "结束"]
+    if unfinished:
+        print("子任务检查未通过（存在未完成的子任务，不能将父任务标记为「结束」）：")
+        for date, t in unfinished:
+            print("  - %s [%s] %s %s" % (t["id"], t["status"], date, t["text"]))
+        print("提示：如需强行结束请加 --force（由会话中的 AI 在用户确认后调用）；"
+              "或先完成子任务。")
+        return EXIT_NEEDS_CONFIRM
+    return 0
+
+
+def cmd_children(args):
+    """列出某主任务下的全部子任务。"""
+    pid = args.id
+    _, _, pt = _find_task(pid)
+    if pt is None:
+        print("未找到父任务 %s" % pid, file=sys.stderr)
+        return 2
+    children = _children_of(pid)
+    children.sort(key=lambda c: (c[1].get("created") or ""))
+    print("父任务 %s：%s（%d 个子任务）" % (pid, pt["text"], len(children)))
+    for date, t in children:
+        flag = STATUS_MARKS.get(t["status"], "[ ]")
+        urgent_mark = "!" if _is_urgent(t, dt.datetime.now()) else " "
+        print("  %s %s [%s%s] %s · %s · %s" % (
+            t["id"], flag, urgent_mark, t["importance"], t["text"],
+            t["due"] or "无截止", t["status"]))
+        if t.get("depends_on"):
+            print("     依赖: %s" % "; ".join(t["depends_on"]))
+    if not children:
+        print("  （无子任务）")
+    return 0
+
+
+def cmd_deparent(args):
+    """解除子任务与父任务的归属关系。"""
+    date, data, t = _find_task(args.id)
+    if t is None:
+        print("未找到任务 %s" % args.id, file=sys.stderr)
+        return 2
+    if not t.get("parent"):
+        print("%s 当前没有父任务。" % args.id)
+        return 0
+    parent_id = t["parent"]
+    t["parent"] = ""
+    t["updated"] = _fmt(dt.datetime.now())
+    data["archived"] = all(x["status"] == "结束" for x in data["tasks"])
+    save_file(date, data["archived"], data["tasks"])
+    build_index()
+    print("%s 已从父任务 %s 下解除归属。" % (args.id, parent_id))
+    return 0
+
+
 def cmd_dep(args):
     """设置 / 查看任务依赖。模式：
       dep <id>               查看
@@ -914,6 +1036,9 @@ def _set_status(tid, status, force=False):
         print("未找到任务 %s" % tid, file=sys.stderr)
         return 2
     rc = _guard_by_deps(t.get("depends_on"), status, force)
+    if rc != 0:
+        return rc
+    rc = _guard_children_done(tid, status, force)
     if rc != 0:
         return rc
     t["status"] = status
@@ -1039,6 +1164,8 @@ def cmd_list(args, now=None):
                             t["due"] or "无截止", t["status"]))
             if t.get("note"):
                 lines.append("   备注: %s" % t["note"])
+            if t.get("parent"):
+                lines.append("   父任务: %s" % t["parent"])
             if t.get("depends_on"):
                 blocked = "（被依赖阻塞）" if _has_unfinished_deps(t) else ""
                 lines.append("   依赖: %s%s" % ("; ".join(t["depends_on"]), blocked))
@@ -1193,6 +1320,7 @@ def main():
     pa.add_argument("--docs", default=None, help="相关文档，用 ; 分隔")
     pa.add_argument("--links", default=None, help="链接，用 ; 分隔")
     pa.add_argument("--deps", default=None, help="依赖任务ID，用 ; 分隔（如 T-A;T-B）")
+    pa.add_argument("--parent", default=None, help="父任务ID（作为其子任务）")
     pa.add_argument("--due", default=None, help="自然语言时间，如 明天 / 星期五 / 2026-10-05 10:00")
     pa.add_argument("--date", default="", help="存储到指定日期文件 YYYY-MM-DD，默认今天")
     pa.add_argument("--from-type", default="agent", help="来源类型，如 agent/link/web（默认 agent）")
@@ -1221,6 +1349,10 @@ def main():
     pdep.add_argument("--add", nargs="+", default=[], help="追加依赖任务ID")
     pdep.add_argument("--remove", nargs="+", default=[], help="移除依赖任务ID")
     pdep.add_argument("--clear", action="store_true", help="清空依赖")
+    pch = sub.add_parser("children", aliases=["sub"], help="列出某主任务下的子任务")
+    pch.add_argument("id")
+    pdp = sub.add_parser("deparent", help="解除子任务与父任务的归属关系")
+    pdp.add_argument("id")
     par = sub.add_parser("archive", help="强制归档某个日期文件（须全部完成）")
     par.add_argument("date")
     pl = sub.add_parser("list", help="列出任务")
@@ -1250,6 +1382,9 @@ def main():
         "work": lambda a: cmd_work(a),
         "reopen": lambda a: cmd_reopen(a),
         "dep": lambda a: cmd_dep(a),
+        "children": lambda a: cmd_children(a),
+        "sub": lambda a: cmd_children(a),
+        "deparent": lambda a: cmd_deparent(a),
         "archive": lambda a: cmd_archive(a),
         "list": lambda a: cmd_list(a),
         "show": lambda a: cmd_show(a),

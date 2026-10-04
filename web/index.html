@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Awam Todo 看板</title>
+<style>
+  :root{
+    --bg:#f4f6fb; --card:#ffffff; --line:#e6eaf2; --text:#1c2333; --muted:#7a8499;
+    --brand:#2f6bff; --brand-soft:#eaf0ff;
+    --c-progress:#2f6bff; --c-todo:#9aa4b5; --c-done:#1fa46e; --c-maint:#f09a2e; --c-other:#8b7bdc;
+    --danger:#e5484d; --warn:#f09a2e;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--text);}
+  .wrap{max-width:1080px;margin:0 auto;padding:20px 16px 60px}
+  header{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:16px}
+  .brand{display:flex;align-items:center;gap:10px}
+  .logo{width:34px;height:34px;border-radius:9px;background:linear-gradient(135deg,#2f6bff,#5a8bff);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:17px}
+  h1{font-size:20px;font-weight:700}
+  .sub{color:var(--muted);font-size:12px;margin-top:2px}
+  .btn{cursor:pointer;border:none;border-radius:8px;font-size:13px;font-weight:600;padding:8px 14px;transition:.15s}
+  .btn-primary{background:var(--brand);color:#fff}
+  .btn-primary:hover{background:#2457dd}
+  .btn-ghost{background:transparent;color:var(--muted)}
+  .btn-ghost:hover{background:#eef1f7;color:var(--text)}
+  .btn-danger{background:#fdecec;color:var(--danger)}
+  .btn-danger:hover{background:#fad5d5}
+  /* stats */
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:16px}
+  .stat{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+  .stat .num{font-size:26px;font-weight:700;line-height:1.1}
+  .stat .lbl{color:var(--muted);font-size:12px;margin-top:4px}
+  .stat.blue .num{color:var(--c-progress)} .stat.gray .num{color:var(--c-todo)}
+  .stat.green .num{color:var(--c-done)} .stat.red .num{color:var(--danger)}
+  /* toolbar */
+  .toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:14px}
+  .tabs{display:flex;gap:6px;flex-wrap:wrap}
+  .tab{padding:6px 12px;border-radius:20px;background:#eef1f7;color:#5a6478;font-size:13px;cursor:pointer;border:none;font-weight:600}
+  .tab.active{background:var(--brand);color:#fff}
+  .tab .n{opacity:.8;font-weight:400;margin-left:4px}
+  .search{flex:1;min-width:180px;position:relative}
+  .search input{width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px;background:#fff}
+  .search input:focus{outline:none;border-color:var(--brand)}
+  /* list */
+  .list{display:flex;flex-direction:column;gap:10px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px;display:flex;gap:12px;align-items:flex-start;transition:.15s}
+  .card:hover{box-shadow:0 4px 14px rgba(30,50,100,.06)}
+  .card.blocked{border-left:3px solid var(--warn)}
+  .mark{flex:0 0 34px;height:34px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:700;color:#fff}
+  .mark.progress{background:var(--c-progress)} .mark.todo{background:var(--c-todo)}
+  .mark.done{background:var(--c-done)} .mark.maint{background:var(--c-maint)} .mark.other{background:var(--c-other)}
+  .body{flex:1;min-width:0}
+  .row1{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .id{font-size:12px;color:var(--muted);font-family:Consolas,monospace}
+  .title{font-size:15px;font-weight:600;word-break:break-word}
+  .title.done-text{text-decoration:line-through;color:var(--muted)}
+  .tags{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+  .tag{font-size:11px;padding:2px 8px;border-radius:6px;font-weight:600}
+  .tag.imp{background:#fff1f0;color:#d4380d}
+  .tag.urgent{background:#fff7e6;color:#d46b08}
+  .tag.due{background:#f0f5ff;color:#1d39c4}
+  .tag.deps{background:#f9f0ff;color:#722ed1}
+  .tag.child{background:#e6fffb;color:#08979c}
+  .meta{color:var(--muted);font-size:12px;margin-top:6px;word-break:break-all}
+  .meta .ws{font-family:Consolas,monospace}
+  .note{margin-top:6px;font-size:13px;color:#444d5e;background:#f8fafc;border-left:3px solid var(--line);padding:6px 10px;border-radius:0 6px 6px 0;white-space:pre-wrap}
+  .actions{display:flex;flex-direction:column;gap:6px;flex:0 0 auto}
+  .mini-btn{font-size:12px;padding:5px 10px;border-radius:7px;border:none;cursor:pointer;font-weight:600;white-space:nowrap}
+  .mb-start{background:#eaf0ff;color:var(--brand)} .mb-done{background:#e6f7ef;color:#0f8a5b}
+  .mb-reopen{background:#eef1f7;color:#5a6478} .mb-edit{background:#fff7e6;color:#d46b08}
+  .mb-del{background:#fdecec;color:var(--danger)}
+  .mb-start:hover{background:#dbe7ff}.mb-done:hover{background:#d2f0e3}.mb-reopen:hover{background:#e3e7ef}.mb-edit:hover{background:#ffeccd}.mb-del:hover{background:#fad5d5}
+  .empty{text-align:center;color:var(--muted);padding:50px 0}
+  /* modal */
+  .overlay{position:fixed;inset:0;background:rgba(20,28,48,.45);display:none;align-items:flex-start;justify-content:center;padding:40px 16px;z-index:50;overflow:auto}
+  .overlay.open{display:flex}
+  .modal{background:#fff;border-radius:14px;max-width:560px;width:100%;padding:20px;box-shadow:0 20px 50px rgba(0,0,0,.2)}
+  .modal h2{font-size:17px;margin-bottom:14px}
+  .form-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .field{display:flex;flex-direction:column;gap:5px}
+  .field.full{grid-column:1 / -1}
+  .field label{font-size:12px;color:var(--muted);font-weight:600}
+  .field input,.field select,.field textarea{padding:8px 10px;border:1px solid var(--line);border-radius:8px;font-size:13px;font-family:inherit}
+  .field input:focus,.field select:focus,.field textarea:focus{outline:none;border-color:var(--brand)}
+  .field textarea{resize:vertical;min-height:60px}
+  .hint{font-size:11px;color:#b0b8c6}
+  .modal-foot{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
+  .conflict-list{background:#fff7e6;border:1px solid #ffd591;border-radius:8px;padding:10px;margin:10px 0;font-size:13px}
+  .conflict-list div{padding:2px 0}
+  .dup-list{background:#f0f5ff;border:1px solid #adc6ff;border-radius:8px;padding:10px;margin:10px 0;font-size:13px}
+  .dup-list div{padding:2px 0}
+  .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#1c2333;color:#fff;padding:10px 18px;border-radius:8px;font-size:13px;z-index:99;opacity:0;transition:.25s;pointer-events:none}
+  .toast.show{opacity:1}
+  .toast.err{background:var(--danger)}
+  @media(max-width:640px){.form-grid{grid-template-columns:1fr}.actions{flex-direction:row;flex-wrap:wrap}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand">
+      <div class="logo">AW</div>
+      <div>
+        <h1>Awam Todo 看板</h1>
+        <div class="sub" id="genTime">待办管理 · 实时读写本地存储</div>
+      </div>
+    </div>
+    <button class="btn btn-primary" onclick="openCreate()">＋ 新增待办</button>
+  </header>
+
+  <div class="stats" id="stats"></div>
+
+  <div class="toolbar">
+    <div class="tabs" id="tabs">
+      <button class="tab active" data-s="all">全部</button>
+      <button class="tab" data-s="进行中">进行中</button>
+      <button class="tab" data-s="待开始">待开始</button>
+      <button class="tab" data-s="结束">已结束</button>
+      <button class="tab" data-s="urgent">紧急</button>
+    </div>
+    <div class="search"><input id="search" placeholder="搜索内容 / 备注 / 工作空间…" oninput="onSearch(this.value)"></div>
+  </div>
+
+  <div class="list" id="list"></div>
+  <div class="empty" id="empty" style="display:none">暂无符合条件的任务</div>
+</div>
+
+<!-- 新增 / 编辑模态框 -->
+<div class="overlay" id="taskOverlay">
+  <div class="modal">
+    <h2 id="taskModalTitle">新增待办</h2>
+    <div class="form-grid">
+      <div class="field full">
+        <label>任务内容 *</label>
+        <input id="f_text" placeholder="要做的核心事情">
+      </div>
+      <div class="field">
+        <label>状态</label>
+        <select id="f_status">
+          <option>进行中</option><option>待开始</option><option>结束</option><option>维护</option><option>其他</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>重要性</label>
+        <select id="f_importance"><option>不重要</option><option>重要</option></select>
+      </div>
+      <div class="field">
+        <label>紧急</label>
+        <select id="f_urgent"><option>不紧急</option><option>紧急</option></select>
+      </div>
+      <div class="field">
+        <label>截止时间</label>
+        <input id="f_due" placeholder="如 明天 10:00 / 周五 / 2026-10-05">
+      </div>
+      <div class="field">
+        <label>存放日期 <span class="hint">(仅新增，默认今天)</span></label>
+        <input id="f_date" placeholder="YYYY-MM-DD">
+      </div>
+      <div class="field full">
+        <label>工作空间目录</label>
+        <input id="f_workspace" placeholder="G:\Projects\...">
+      </div>
+      <div class="field full">
+        <label>备注</label>
+        <textarea id="f_note" placeholder="补充说明"></textarea>
+      </div>
+      <div class="field">
+        <label>相关文档</label>
+        <input id="f_docs" placeholder="用 ; 分隔">
+      </div>
+      <div class="field">
+        <label>链接</label>
+        <input id="f_links" placeholder="用 ; 分隔">
+      </div>
+      <div class="field">
+        <label>前置依赖 (任务ID)</label>
+        <input id="f_deps" placeholder="T-20261002-001; T-...">
+      </div>
+      <div class="field">
+        <label>父任务 (任务ID)</label>
+        <input id="f_parent" placeholder="归属主任务 ID">
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="closeModal('taskOverlay')">取消</button>
+      <button class="btn btn-primary" id="taskSaveBtn" onclick="submitTask()">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 确认模态框（冲突 / 重复 / 删除） -->
+<div class="overlay" id="confirmOverlay">
+  <div class="modal">
+    <h2 id="confirmTitle">提示</h2>
+    <div id="confirmBody"></div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="closeModal('confirmOverlay')">取消</button>
+      <button class="btn btn-primary" id="confirmOkBtn" onclick="confirmOk()">确定</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+<script>
+"use strict";
+const STATUS_CLASS = { "进行中":"progress", "待开始":"todo", "结束":"done", "维护":"maint", "其他":"other" };
+const STATUS_MARK  = { "进行中":"~", "待开始":"○", "结束":"✓", "维护":"!", "其他":"·" };
+let currentState = "all";
+let currentKeyword = "";
+let confirmAction = null;   // 待执行的确认回调
+let editingId = null;       // 编辑中的任务 id（null = 新增）
+
+function $(id){ return document.getElementById(id); }
+
+// ---------- API ----------
+async function api(path, method, body){
+  const opt = { method: method || "GET", headers: {} };
+  if (body !== undefined){
+    opt.headers["Content-Type"] = "application/json";
+    opt.body = JSON.stringify(body);
+  }
+  const res = await fetch(path, opt);
+  let data = null;
+  try { data = await res.json(); } catch(e){}
+  return { ok: res.ok, status: res.status, data };
+}
+
+// ---------- 加载与渲染 ----------
+async function load(){
+  const q = new URLSearchParams();
+  if (currentState && currentState !== "all") q.set("state", currentState);
+  if (currentKeyword) q.set("q", currentKeyword);
+  const r = await api("/api/todos?" + q.toString());
+  if (!r.ok){ toast("加载失败", true); return; }
+  renderStats(r.data.summary);
+  renderTabs(r.data.summary);
+  renderList(r.data.items);
+  if (r.data.summary && r.data.summary.files){
+    // genTime 已由后端在 index 重建时更新，这里展示总数
+    $("genTime").textContent = "共 " + r.data.summary.total + " 条待办 · 实时读写本地存储";
+  }
+}
+
+function renderStats(s){
+  if (!s) return;
+  $("stats").innerHTML =
+    '<div class="stat blue"><div class="num">'+s.in_progress+'</div><div class="lbl">进行中</div></div>'+
+    '<div class="stat gray"><div class="num">'+s.todo+'</div><div class="lbl">待开始</div></div>'+
+    '<div class="stat green"><div class="num">'+s.done+'</div><div class="lbl">已结束</div></div>'+
+    '<div class="stat red"><div class="num">'+s.urgent+'</div><div class="lbl">紧急</div></div>'+
+    '<div class="stat"><div class="num">'+s.total+'</div><div class="lbl">总计</div></div>';
+}
+
+function renderTabs(s){
+  const counts = { "all": s.total, "进行中": s.in_progress, "待开始": s.todo, "结束": s.done, "urgent": s.urgent };
+  document.querySelectorAll("#tabs .tab").forEach(t=>{
+    const key = t.getAttribute("data-s");
+    t.classList.toggle("active", key === currentState);
+    const n = counts[key] !== undefined ? counts[key] : "";
+    let span = t.querySelector(".n");
+    if (!span){ span = document.createElement("span"); span.className="n"; t.appendChild(span); }
+    span.textContent = n;
+  });
+}
+
+function esc(s){
+  return String(s == null ? "" : s)
+    .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
+    .replace(/"/g,"&quot;").replace(/'/g,"&#39;");
+}
+
+function renderList(items){
+  const listEl = $("list");
+  const emptyEl = $("empty");
+  window.tasksById = {};
+  if (!items || items.length === 0){ listEl.innerHTML = ""; emptyEl.style.display = "block"; return; }
+  emptyEl.style.display = "none";
+  items.forEach(t => window.tasksById[t.id] = t);
+  listEl.innerHTML = items.map(renderCard).join("");
+}
+
+function renderCard(t){
+  const cls = STATUS_CLASS[t.status] || "other";
+  const done = t.status === "结束";
+  const tags = [];
+  if (t.importance === "重要") tags.push('<span class="tag imp">重要</span>');
+  if (t.is_urgent) tags.push('<span class="tag urgent">紧急</span>');
+  if (t.due) tags.push('<span class="tag due">截止 ' + esc(t.due) + '</span>');
+  if (t.blocked) tags.push('<span class="tag deps">被依赖阻塞</span>');
+  if (t.parent) tags.push('<span class="tag child">子任务</span>');
+  const meta = [];
+  if (t.workspace) meta.push('<span class="ws">📁 ' + esc(t.workspace) + '</span>');
+  if (t.date) meta.push('📅 ' + esc(t.date));
+  if (t.created) meta.push('创建 ' + esc(t.created));
+  if (t.updated) meta.push('更新 ' + esc(t.updated));
+  const depsTxt = (t.depends_on && t.depends_on.length) ? '依赖: ' + esc(t.depends_on.join(', ')) : '';
+  const actions = renderActions(t);
+  return '' +
+    '<div class="card' + (t.blocked ? " blocked" : "") + '">' +
+      '<div class="mark ' + cls + '">' + STATUS_MARK[t.status] + '</div>' +
+      '<div class="body">' +
+        '<div class="row1"><span class="id">' + esc(t.id) + '</span><span class="title' + (done?' done-text':'') + '">' + esc(t.text) + '</span></div>' +
+        (tags.length ? '<div class="tags">' + tags.join("") + '</div>' : '') +
+        (t.note ? '<div class="note">' + esc(t.note) + '</div>' : '') +
+        (meta.length ? '<div class="meta">' + meta.join(' · ') + '</div>' : '') +
+        (depsTxt ? '<div class="meta">' + depsTxt + '</div>' : '') +
+      '</div>' +
+      '<div class="actions">' + actions + '</div>' +
+    '</div>';
+}
+
+function renderActions(t){
+  const a = [];
+  const id = t.id;
+  if (t.status === "进行中"){ a.push(mbtn("完成", "mb-done", id, "done")); a.push(mbtn("改为待开始", "mb-reopen", id, "todo")); }
+  else if (t.status === "待开始"){ a.push(mbtn("开始", "mb-start", id, "progress")); a.push(mbtn("完成", "mb-done", id, "done")); }
+  else if (t.status === "结束"){ a.push(mbtn("重开", "mb-reopen", id, "progress")); a.push(mbtn("改待开始", "mb-reopen", id, "todo")); }
+  else { a.push(mbtn("开始", "mb-start", id, "progress")); }
+  a.push(mbtn("编辑", "mb-edit", id, "edit"));
+  a.push(mbtn("删除", "mb-del", id, "del"));
+  return a.join("");
+}
+
+function mbtn(label, cls, id, act){
+  return '<button class="mini-btn ' + cls + '" data-id="' + id + '" data-act="' + act + '">' + label + '</button>';
+}
+
+// 按钮事件委托（避免内联回调的闭包/转义问题）
+document.addEventListener("click", function(ev){
+  var b = ev.target && ev.target.closest ? ev.target.closest(".mini-btn") : null;
+  if (!b) return;
+  ev.stopPropagation();
+  var id = b.getAttribute("data-id");
+  var act = b.getAttribute("data-act");
+  var t = (window.tasksById || {})[id] || {};
+  if (act === "progress") setStatus(id, "进行中");
+  else if (act === "todo") setStatus(id, "待开始");
+  else if (act === "done") setStatus(id, "结束");
+  else if (act === "edit") openEdit(id);
+  else if (act === "del") askDelete(id, t.text);
+});
+
+// ---------- 状态流转 ----------
+async function setStatus(id, status){
+  const r = await api("/api/todos/" + id + "/status", "PATCH", { status });
+  if (r.ok){ toast("已更新为「" + status + "」"); load(); return; }
+  if (r.status === 409 && r.data && r.data.conflicts && r.data.conflicts.length){
+    confirmAction = () => setStatusForce(id, status);
+    showConfirm("存在冲突，确认强制推进？", renderConflicts(r.data.conflicts, status), "强制推进");
+    return;
+  }
+  toast((r.data && r.data.error) || "操作失败", true);
+}
+
+async function setStatusForce(id, status){
+  const r = await api("/api/todos/" + id + "/status", "PATCH", { status, force: true });
+  if (r.ok){ toast("已强制更新为「" + status + "」"); load(); }
+  else toast((r.data && r.data.error) || "操作失败", true);
+}
+
+function renderConflicts(conflicts, status){
+  const lines = conflicts.map(c=>{
+    const kind = c.kind === "children" ? "未完成子任务" : "前置依赖";
+    return '<div>· [' + kind + '] ' + esc(c.id) + '（' + esc(c.status) + '）' + (c.text ? '：' + esc(c.text) : '') + '</div>';
+  });
+  return '<div class="conflict-list">目标状态「' + esc(status) + '」被以下未完成项阻塞：' + lines.join("") + '</div>';
+}
+
+// ---------- 新增 / 编辑 ----------
+function openCreate(){
+  editingId = null;
+  $("taskModalTitle").textContent = "新增待办";
+  ["f_text","f_due","f_date","f_workspace","f_note","f_docs","f_links","f_deps","f_parent"].forEach(id=>$(id).value="");
+  $("f_status").value = "进行中"; $("f_importance").value = "不重要"; $("f_urgent").value = "不紧急";
+  openModal("taskOverlay");
+  $("f_text").focus();
+}
+
+async function openEdit(id){
+  const r = await api("/api/todos/" + id);
+  if (!r.ok){ toast("读取失败", true); return; }
+  const t = r.data;
+  editingId = id;
+  $("taskModalTitle").textContent = "编辑 " + id;
+  $("f_text").value = t.text || "";
+  $("f_status").value = t.status || "进行中";
+  $("f_importance").value = t.importance || "不重要";
+  $("f_urgent").value = t.urgent || "不紧急";
+  $("f_due").value = t.due || "";
+  $("f_date").value = "";
+  $("f_workspace").value = t.workspace || "";
+  $("f_note").value = t.note || "";
+  $("f_docs").value = (t.docs||[]).join("; ");
+  $("f_links").value = (t.links||[]).join("; ");
+  $("f_deps").value = (t.depends_on||[]).join("; ");
+  $("f_parent").value = t.parent || "";
+  openModal("taskOverlay");
+}
+
+function collectForm(){
+  return {
+    text: $("f_text").value.trim(),
+    status: $("f_status").value,
+    importance: $("f_importance").value,
+    urgent: $("f_urgent").value,
+    due: $("f_due").value.trim(),
+    workspace: $("f_workspace").value.trim(),
+    note: $("f_note").value.trim(),
+    docs: $("f_docs").value.trim(),
+    links: $("f_links").value.trim(),
+    deps: $("f_deps").value.trim(),
+    parent: $("f_parent").value.trim(),
+  };
+}
+
+async function submitTask(){
+  const form = collectForm();
+  if (!form.text){ toast("任务内容不能为空", true); return; }
+  if (editingId){
+    await updateTask(editingId, form);
+  } else {
+    form.date = $("f_date").value.trim();
+    await createTask(form);
+  }
+}
+
+async function createTask(form){
+  const r = await api("/api/todos", "POST", form);
+  if (r.status === 201){ toast("已新增 " + r.data.id); closeModal("taskOverlay"); load(); return; }
+  if (r.status === 409 && r.data && r.data.duplicates && r.data.duplicates.length){
+    confirmAction = () => createTaskForce(form);
+    showConfirm("检测到相同 / 近似任务", renderDuplicates(r.data.duplicates) +
+      '<div class="conflict-list">仍要新建，还是合并到已有任务？</div>', "仍要新建");
+    return;
+  }
+  toast((r.data && r.data.error) || "新增失败", true);
+}
+
+async function createTaskForce(form){
+  const r = await api("/api/todos", "POST", { ...form, force: true });
+  if (r.status === 201){ toast("已强制新增 " + r.data.id); closeModal("taskOverlay"); load(); }
+  else toast((r.data && r.data.error) || "新增失败", true);
+}
+
+function renderDuplicates(dups){
+  const lines = dups.map(d=>{
+    const kind = d.kind === "exact" ? "相同" : ("近似 " + d.score + "%");
+    return '<div>· [' + kind + '] ' + esc(d.id) + '（' + esc(d.status) + '）' + esc(d.text) + '</div>';
+  });
+  return '<div class="dup-list">' + lines.join("") + '</div>';
+}
+
+async function updateTask(id, form){
+  const r = await api("/api/todos/" + id, "PUT", form);
+  if (r.ok){ toast("已保存"); closeModal("taskOverlay"); load(); return; }
+  if (r.status === 409 && r.data && r.data.conflicts && r.data.conflicts.length){
+    confirmAction = () => updateTaskForce(id, form);
+    showConfirm("存在冲突，确认强制保存？", renderConflicts(r.data.conflicts, form.status), "强制保存");
+    return;
+  }
+  toast((r.data && r.data.error) || "保存失败", true);
+}
+
+async function updateTaskForce(id, form){
+  const r = await api("/api/todos/" + id, "PUT", { ...form, force: true });
+  if (r.ok){ toast("已强制保存"); closeModal("taskOverlay"); load(); }
+  else toast((r.data && r.data.error) || "保存失败", true);
+}
+
+// ---------- 删除 ----------
+function askDelete(id, text){
+  confirmAction = () => doDelete(id);
+  showConfirm("确认删除该待办？",
+    '<div class="conflict-list">' + esc(id) + '：' + esc(text) + '<br>删除后将同时清理其他任务对它的依赖/父任务引用。</div>',
+    "删除");
+}
+
+async function doDelete(id){
+  const r = await api("/api/todos/" + id, "DELETE");
+  if (r.ok){ toast("已删除 " + id); load(); }
+  else toast((r.data && r.data.error) || "删除失败", true);
+}
+
+// ---------- 弹窗 / 确认 ----------
+function openModal(id){ $(id).classList.add("open"); }
+function closeModal(id){ $(id).classList.remove("open"); if (id === "confirmOverlay") confirmAction = null; }
+
+function showConfirm(title, bodyHtml, okLabel){
+  $("confirmTitle").textContent = title;
+  $("confirmBody").innerHTML = bodyHtml;
+  $("confirmOkBtn").textContent = okLabel || "确定";
+  openModal("confirmOverlay");
+}
+function confirmOk(){
+  closeModal("confirmOverlay");
+  const fn = confirmAction; confirmAction = null;
+  if (fn) fn();
+}
+
+// 点击遮罩关闭任务表单（确认框必须显式操作）
+document.getElementById("taskOverlay").addEventListener("click", e=>{
+  if (e.target.id === "taskOverlay") closeModal("taskOverlay");
+});
+
+// ---------- 筛选 / 搜索 ----------
+document.querySelectorAll("#tabs .tab").forEach(t=>{
+  t.addEventListener("click", ()=>{ currentState = t.getAttribute("data-s"); load(); });
+});
+function onSearch(v){ currentKeyword = v.trim(); load(); }
+
+// ---------- toast ----------
+let toastTimer = null;
+function toast(msg, isErr){
+  const el = $("toast");
+  el.textContent = msg;
+  el.className = "toast show" + (isErr ? " err" : "");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(()=>el.classList.remove("show"), 2600);
+}
+
+// 键盘：Esc 关闭弹窗
+document.addEventListener("keydown", e=>{
+  if (e.key === "Escape"){ closeModal("taskOverlay"); closeModal("confirmOverlay"); }
+});
+// Enter 提交任务表单（避免在文本域误触发）
+document.getElementById("taskOverlay").addEventListener("keydown", e=>{
+  if (e.key === "Enter" && e.target.tagName !== "TEXTAREA"){ e.preventDefault(); submitTask(); }
+});
+
+load();
+</script>
+</body>
+</html>

@@ -259,3 +259,30 @@ python ...\todo.py show T-20261002-005                                 # 查看�
 - 不做多人协作 / 同步 / 远程服务。
 - `from` 的来源链接只能由 Agent 在会话上下文中取得（如当前 AI 对话链接）；取不到就留空，
   脚本不会自行编造。
+
+## 网页前端展示（web）
+
+当用户要求「用网页展示待办 / 打开看板 / web 查看 / 网页操作待办」时，启动本地网页前端：
+
+```powershell
+python "...\awam-todo\web\server.py"              # 默认端口 8796，启动后自动打开浏览器
+python "...\awam-todo\web\server.py" --port 9000  # 指定端口
+python "...\awam-todo\web\server.py" --no-browser # 只启动不打开浏览器
+```
+
+- 服务常驻后台，浏览器访问 `http://127.0.0.1:8796/`。
+- 网页支持：列表展示与统计、按状态筛选、关键词搜索、**增删改查**、状态流转（开始/完成/重开/待开始）、
+  重复检测确认（相同/近似）、依赖链与子任务冲突确认（可强制推进）。
+- 后端复用 `todo.py` 的解析 / 校验 / 索引逻辑，任何改动实时落盘到 `storage/` 并重建 `index.json`。
+- 停止：在运行窗口按 Ctrl+C（或结束对应 python 进程）。
+
+REST API（仅本机）：
+- `GET    /api/todos`               列表 + 摘要（可 `?state=`、`?q=`）
+- `GET    /api/todos/<id>`          单条任务
+- `POST   /api/todos`               新增（重复检测命中返回 409 + duplicates，可 `force` / `update_id`）
+- `PUT    /api/todos/<id>`          更新字段（含状态，带依赖/子任务守卫）
+- `PATCH  /api/todos/<id>/status`   仅改状态（冲突返回 409 + conflicts，可 `force`）
+- `DELETE /api/todos/<id>`          删除（同时清理其他任务对它的依赖 / 父任务引用）
+
+启动时若发现旧服务已占端口，先结束原 python 进程再重启。网页改动与命令行 `todo.py` 完全同源，
+任一端操作后另一端看到的都是最新状态。

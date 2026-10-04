@@ -27,3 +27,6 @@ htmlcov/
 .DS_Store
 Thumbs.db
 Desktop.ini
+
+# web 前端运行时日志
+web/*.log

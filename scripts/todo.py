@@ -12,7 +12,7 @@ awam-todo —— 输入与管理 To-Do 的实现脚本。
 
 用法示例：
   python todo.py add --text "撰写季度报告" --importance 重要 --due "2026-10-05 10:00"
-  python todo.py add --text "预约体检" --urgent 紧急 --note "带身份证"
+  python todo.py add --text "预约体检" --urgent 紧急 --note "带身份证" --tags "健康;生活"
   python todo.py add --update-id T-20261002-001 --text "撰写季度报告"   # 确认后更新已有
   python todo.py add --force --text "撰写季度报告"                     # 跳过重复检测强制新建
   python todo.py check --text "撰写季度报告"                           # 只读查重
@@ -272,7 +272,7 @@ def _parse_block(block_lines):
     task = {"id": None, "status": DEFAULT_STATUS, "importance": DEFAULT_IMPORTANCE, "text": "",
             "note": "", "workspace": "", "docs": [], "links": [], "depends_on": [], "due": None,
             "created": None, "updated": None, "urgent": DEFAULT_URGENT, "from": None,
-            "parent": ""}
+            "parent": "", "tags": []}
     for line in block_lines:
         line = line.strip()
         if ":" not in line:
@@ -297,6 +297,8 @@ def _parse_block(block_lines):
             task["links"] = [x.strip() for x in v.split(";") if x.strip()]
         elif k == "依赖":
             task["depends_on"] = [x.strip() for x in v.split(";") if x.strip()]
+        elif k == "标签":
+            task["tags"] = [x.strip() for x in v.split(";") if x.strip()]
         elif k == "来源":
             task["from"] = _parse_from(v)
         elif k == "截止":
@@ -374,6 +376,8 @@ def _write_block(t):
         lines.append("链接: %s" % "; ".join(t["links"]))
     if t.get("depends_on"):
         lines.append("依赖: %s" % "; ".join(t["depends_on"]))
+    if t.get("tags"):
+        lines.append("标签: %s" % "; ".join(t["tags"]))
     if t.get("from") and (t["from"].get("type") or t["from"].get("url")):
         lines.append("来源: %s|%s" % (t["from"].get("type") or "",
                                       t["from"].get("url") or ""))
@@ -479,6 +483,7 @@ def build_index(now=None):
                 "depends_on": t.get("depends_on"), "blocked": _has_unfinished_deps(t),
                 "parent": t.get("parent") or "",
                 "from": t.get("from"),
+                "tags": t.get("tags") or [],
             }
             if t["status"] == "结束":
                 done.append(item)
@@ -626,6 +631,11 @@ def _apply_task_fields(task, args, now, *, is_new):
     elif is_new:
         task["depends_on"] = []
 
+    if getattr(args, "tags", None) is not None:
+        task["tags"] = _split_list_field(args.tags)
+    elif is_new:
+        task["tags"] = []
+
     if args.parent is not None:
         task["parent"] = _norm(args.parent)
     elif is_new:
@@ -669,6 +679,8 @@ def _print_task_summary(prefix, tid, date, task, idx):
         print("  链接: %s" % "; ".join(task["links"]))
     if task.get("depends_on"):
         print("  依赖: %s" % "; ".join(task["depends_on"]))
+    if task.get("tags"):
+        print("  标签: %s" % "; ".join(task["tags"]))
     if task.get("parent"):
         print("  父任务: %s" % task["parent"])
     if task.get("from") and task["from"].get("url"):
@@ -770,7 +782,7 @@ def cmd_add(args, now=None):
         "id": tid, "status": DEFAULT_STATUS, "importance": DEFAULT_IMPORTANCE,
         "text": text, "note": "", "workspace": "", "docs": [], "links": [],
         "depends_on": [], "due": None, "created": None, "updated": None,
-        "urgent": DEFAULT_URGENT, "from": None, "parent": "",
+        "urgent": DEFAULT_URGENT, "from": None, "parent": "", "tags": [],
     }
     _apply_task_fields(task, args, now, is_new=True)
     # 新任务的依赖校验：存在性 + 硬检查（新建即以 进行中/结束 起步时同样受依赖约束）
@@ -1169,6 +1181,8 @@ def cmd_list(args, now=None):
             if t.get("depends_on"):
                 blocked = "（被依赖阻塞）" if _has_unfinished_deps(t) else ""
                 lines.append("   依赖: %s%s" % ("; ".join(t["depends_on"]), blocked))
+            if t.get("tags"):
+                lines.append("   标签: %s" % "; ".join(t["tags"]))
             if t.get("workspace"):
                 lines.append("   工作空间: %s" % t["workspace"])
             if t.get("links"):
@@ -1320,6 +1334,7 @@ def main():
     pa.add_argument("--docs", default=None, help="相关文档，用 ; 分隔")
     pa.add_argument("--links", default=None, help="链接，用 ; 分隔")
     pa.add_argument("--deps", default=None, help="依赖任务ID，用 ; 分隔（如 T-A;T-B）")
+    pa.add_argument("--tags", default=None, help="标签，用 ; 分隔（如 工作;紧急）")
     pa.add_argument("--parent", default=None, help="父任务ID（作为其子任务）")
     pa.add_argument("--due", default=None, help="自然语言时间，如 明天 / 星期五 / 2026-10-05 10:00")
     pa.add_argument("--date", default="", help="存储到指定日期文件 YYYY-MM-DD，默认今天")

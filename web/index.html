@@ -19,6 +19,7 @@
   .logo{width:34px;height:34px;border-radius:9px;background:linear-gradient(135deg,#2f6bff,#5a8bff);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:17px}
   h1{font-size:20px;font-weight:700}
   .sub{color:var(--muted);font-size:12px;margin-top:2px}
+  .header-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
   .btn{cursor:pointer;border:none;border-radius:8px;font-size:13px;font-weight:600;padding:8px 14px;transition:.15s}
   .btn-primary{background:var(--brand);color:#fff}
   .btn-primary:hover{background:#2457dd}
@@ -26,6 +27,12 @@
   .btn-ghost:hover{background:#eef1f7;color:var(--text)}
   .btn-danger{background:#fdecec;color:var(--danger)}
   .btn-danger:hover{background:#fad5d5}
+  .btn.dirty{background:var(--warn);color:#fff}
+  .btn.dirty:hover{background:#e08a15}
+  .badge{display:inline-block;min-width:18px;padding:0 5px;border-radius:9px;background:rgba(255,255,255,.25);font-size:11px;line-height:18px;text-align:center;margin-left:4px;font-weight:700}
+  .mini-select{font-size:12px;padding:7px 8px;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--text);cursor:pointer;font-family:inherit}
+  .mini-select:focus{outline:none;border-color:var(--brand)}
+  #saveState{font-size:12px;color:var(--muted);min-width:110px}
   /* stats */
   .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:16px}
   .stat{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
@@ -42,11 +49,13 @@
   .search{flex:1;min-width:180px;position:relative}
   .search input{width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px;background:#fff}
   .search input:focus{outline:none;border-color:var(--brand)}
+  #tagFilter{max-width:180px}
   /* list */
   .list{display:flex;flex-direction:column;gap:10px}
   .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px;display:flex;gap:12px;align-items:flex-start;transition:.15s}
   .card:hover{box-shadow:0 4px 14px rgba(30,50,100,.06)}
   .card.blocked{border-left:3px solid var(--warn)}
+  .card.local{border-style:dashed}
   .mark{flex:0 0 34px;height:34px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:700;color:#fff}
   .mark.progress{background:var(--c-progress)} .mark.todo{background:var(--c-todo)}
   .mark.done{background:var(--c-done)} .mark.maint{background:var(--c-maint)} .mark.other{background:var(--c-other)}
@@ -62,15 +71,27 @@
   .tag.due{background:#f0f5ff;color:#1d39c4}
   .tag.deps{background:#f9f0ff;color:#722ed1}
   .tag.child{background:#e6fffb;color:#08979c}
+  .tag.lbl{background:#eef2f8;color:#4a5670}
   .meta{color:var(--muted);font-size:12px;margin-top:6px;word-break:break-all}
   .meta .ws{font-family:Consolas,monospace}
   .note{margin-top:6px;font-size:13px;color:#444d5e;background:#f8fafc;border-left:3px solid var(--line);padding:6px 10px;border-radius:0 6px 6px 0;white-space:pre-wrap}
   .actions{display:flex;flex-direction:column;gap:6px;flex:0 0 auto}
   .mini-btn{font-size:12px;padding:5px 10px;border-radius:7px;border:none;cursor:pointer;font-weight:600;white-space:nowrap}
+  .status-select{font-size:12px;padding:5px 8px;border:1px solid var(--line);border-radius:7px;background:#fff;color:var(--text);font-weight:600;cursor:pointer;font-family:inherit;width:100%}
+  .status-select:focus{outline:none;border-color:var(--brand)}
+  .status-select option{font-weight:400}
   .mb-start{background:#eaf0ff;color:var(--brand)} .mb-done{background:#e6f7ef;color:#0f8a5b}
   .mb-reopen{background:#eef1f7;color:#5a6478} .mb-edit{background:#fff7e6;color:#d46b08}
   .mb-del{background:#fdecec;color:var(--danger)}
   .mb-start:hover{background:#dbe7ff}.mb-done:hover{background:#d2f0e3}.mb-reopen:hover{background:#e3e7ef}.mb-edit:hover{background:#ffeccd}.mb-del:hover{background:#fad5d5}
+  /* 工作空间路径浮动菜单：由 JS 以鼠标位置为弹出中点定位（position:fixed） */
+  .ws-wrap{position:relative;display:inline-block}
+  .ws{cursor:pointer;border-bottom:1px dashed var(--muted);padding-bottom:1px;transition:.15s}
+  .ws:hover{color:var(--brand);border-bottom-color:var(--brand)}
+  .ws-menu{position:fixed;left:-9999px;top:-9999px;background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:0 8px 24px rgba(20,40,80,.16);min-width:150px;padding:5px;display:none;flex-direction:column;gap:2px;z-index:60}
+  .ws-wrap:hover .ws-menu{display:flex}
+  .ws-item{display:block;width:100%;text-align:left;padding:7px 10px;border:none;background:transparent;border-radius:7px;font-size:13px;cursor:pointer;font-family:inherit;color:var(--text)}
+  .ws-item:hover{background:var(--brand-soft);color:var(--brand)}
   .empty{text-align:center;color:var(--muted);padding:50px 0}
   /* modal */
   .overlay{position:fixed;inset:0;background:rgba(20,28,48,.45);display:none;align-items:flex-start;justify-content:center;padding:40px 16px;z-index:50;overflow:auto}
@@ -90,7 +111,7 @@
   .conflict-list div{padding:2px 0}
   .dup-list{background:#f0f5ff;border:1px solid #adc6ff;border-radius:8px;padding:10px;margin:10px 0;font-size:13px}
   .dup-list div{padding:2px 0}
-  .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#1c2333;color:#fff;padding:10px 18px;border-radius:8px;font-size:13px;z-index:99;opacity:0;transition:.25s;pointer-events:none}
+  .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#1c2333;color:#fff;padding:10px 18px;border-radius:8px;font-size:13px;z-index:99;opacity:0;transition:.25s;pointer-events:none;max-width:80vw;text-align:center}
   .toast.show{opacity:1}
   .toast.err{background:var(--danger)}
   @media(max-width:640px){.form-grid{grid-template-columns:1fr}.actions{flex-direction:row;flex-wrap:wrap}}
@@ -103,10 +124,22 @@
       <div class="logo">AW</div>
       <div>
         <h1>Awam Todo 看板</h1>
-        <div class="sub" id="genTime">待办管理 · 实时读写本地存储</div>
+        <div class="sub" id="genTime">待办管理 · 本地暂存 + 延迟保存</div>
       </div>
     </div>
-    <button class="btn btn-primary" onclick="openCreate()">＋ 新增待办</button>
+    <div class="header-actions">
+      <span id="saveState"></span>
+      <select id="autosaveSel" class="mini-select" title="自动保存间隔" onchange="onAutosaveChange(this)">
+        <option value="0">自动保存: 关</option>
+        <option value="1">自动保存: 1分钟</option>
+        <option value="5">自动保存: 5分钟</option>
+        <option value="10">自动保存: 10分钟</option>
+        <option value="30">自动保存: 30分钟</option>
+        <option value="60">自动保存: 60分钟</option>
+      </select>
+      <button class="btn btn-primary" id="saveBtn" onclick="doSave()">保存更改<span class="badge" id="dirtyBadge">0</span></button>
+      <button class="btn btn-primary" onclick="openCreate()">＋ 新增待办</button>
+    </div>
   </header>
 
   <div class="stats" id="stats"></div>
@@ -119,6 +152,9 @@
       <button class="tab" data-s="结束">已结束</button>
       <button class="tab" data-s="urgent">紧急</button>
     </div>
+    <select id="tagFilter" class="mini-select" onchange="onTagFilter(this.value)" title="按标签过滤">
+      <option value="">全部标签</option>
+    </select>
     <div class="search"><input id="search" placeholder="搜索内容 / 备注 / 工作空间…" oninput="onSearch(this.value)"></div>
   </div>
 
@@ -173,6 +209,10 @@
         <label>链接</label>
         <input id="f_links" placeholder="用 ; 分隔">
       </div>
+      <div class="field full">
+        <label>标签</label>
+        <input id="f_tags" placeholder="用 ; 分隔，如 工作;学习">
+      </div>
       <div class="field">
         <label>前置依赖 (任务ID)</label>
         <input id="f_deps" placeholder="T-20261002-001; T-...">
@@ -189,13 +229,14 @@
   </div>
 </div>
 
-<!-- 确认模态框（冲突 / 重复 / 删除） -->
+<!-- 确认模态框（冲突 / 重复 / 删除 / 未保存恢复） -->
 <div class="overlay" id="confirmOverlay">
   <div class="modal">
     <h2 id="confirmTitle">提示</h2>
     <div id="confirmBody"></div>
     <div class="modal-foot">
-      <button class="btn btn-ghost" onclick="closeModal('confirmOverlay')">取消</button>
+      <button class="btn btn-ghost" id="confirmCancelBtn" onclick="closeModal('confirmOverlay')" style="display:none">取消</button>
+      <button class="btn btn-ghost" id="confirmAltBtn" onclick="confirmAlt()" style="display:none"></button>
       <button class="btn btn-primary" id="confirmOkBtn" onclick="confirmOk()">确定</button>
     </div>
   </div>
@@ -206,12 +247,60 @@
 "use strict";
 const STATUS_CLASS = { "进行中":"progress", "待开始":"todo", "结束":"done", "维护":"maint", "其他":"other" };
 const STATUS_MARK  = { "进行中":"~", "待开始":"○", "结束":"✓", "维护":"!", "其他":"·" };
+const STATUSES = ["进行中", "待开始", "结束", "维护", "其他"];
+const LS_BASELINE = "awam-todo:baseline";
+const LS_PENDING  = "awam-todo:pending";
+const LS_AUTOSAVE = "awam-todo:autosave-min";
+
 let currentState = "all";
 let currentKeyword = "";
-let confirmAction = null;   // 待执行的确认回调
-let editingId = null;       // 编辑中的任务 id（null = 新增）
+let currentTag = "";
+let confirmAction = null;    // 确认框主操作回调
+let confirmAltAction = null; // 确认框次操作回调
+let editingId = null;        // 编辑中的任务 id（null = 新增）
+let saving = false;
+let tempSeq = 0;
+
+// ---------- 本地存储状态：items + patch 队列 ----------
+const store = {
+  items: [],       // 内存任务列表（含未保存的新增任务，临时 id 以 local- 开头）
+  patches: [],     // 未保存的操作队列（create / update / status / delete）
+  revision: "",    // 最近一次与文件同步时的服务端修订指纹
+  lastSavedAt: null,
+};
 
 function $(id){ return document.getElementById(id); }
+
+// ---------- 工具函数 ----------
+function esc(s){
+  return String(s == null ? "" : s)
+    .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
+    .replace(/"/g,"&quot;").replace(/'/g,"&#39;");
+}
+function splitList(s){ return (s||"").split(";").map(x=>x.trim()).filter(Boolean); }
+function pad2(n){ return (n<10?"0":"")+n; }
+function nowStr(){ const d=new Date(); return d.getFullYear()+"-"+pad2(d.getMonth()+1)+"-"+pad2(d.getDate())+" "+pad2(d.getHours())+":"+pad2(d.getMinutes()); }
+function todayStr(){ const d=new Date(); return d.getFullYear()+"-"+pad2(d.getMonth()+1)+"-"+pad2(d.getDate()); }
+function dueVal(due){
+  if (!due) return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})(?: (\d{2}):(\d{2}))?$/.exec(due);
+  if (!m) return null;
+  return new Date(+m[1], +m[2]-1, +m[3], +(m[4]||0), +(m[5]||0)).getTime();
+}
+function localUrgent(t, now){
+  if (t.urgent === "紧急") return true;
+  const dv = dueVal(t.due);
+  if (dv == null) return false;
+  return dv <= now + 24*3600*1000;
+}
+function keyOfPatch(p){ return (p.op||"") + ":" + (p.temp_id || p.id || ""); }
+function keyOfFail(f){ return (f.op||"") + ":" + (f.temp_id || f.id || ""); }
+function findItem(id){ return store.items.find(x => x.id === id); }
+function itemsById(){
+  const m = {};
+  store.items.forEach(t => m[t.id] = t);
+  return m;
+}
 
 // ---------- API ----------
 async function api(path, method, body){
@@ -226,24 +315,87 @@ async function api(path, method, body){
   return { ok: res.ok, status: res.status, data };
 }
 
-// ---------- 加载与渲染 ----------
-async function load(){
-  const q = new URLSearchParams();
-  if (currentState && currentState !== "all") q.set("state", currentState);
-  if (currentKeyword) q.set("q", currentKeyword);
-  const r = await api("/api/todos?" + q.toString());
-  if (!r.ok){ toast("加载失败", true); return; }
-  renderStats(r.data.summary);
-  renderTabs(r.data.summary);
-  renderList(r.data.items);
-  if (r.data.summary && r.data.summary.files){
-    // genTime 已由后端在 index 重建时更新，这里展示总数
-    $("genTime").textContent = "共 " + r.data.summary.total + " 条待办 · 实时读写本地存储";
-  }
+// ---------- 本地持久化（浏览器存储） ----------
+function persistBaseline(){
+  try{
+    localStorage.setItem(LS_BASELINE, JSON.stringify({ revision: store.revision, savedAt: store.lastSavedAt }));
+  }catch(e){}
+}
+function persistPending(){
+  try{
+    localStorage.setItem(LS_PENDING, JSON.stringify({ patches: store.patches, savedAt: Date.now() }));
+  }catch(e){}
+}
+function clearPending(){ try{ localStorage.removeItem(LS_PENDING); }catch(e){} }
+
+// ---------- 加载 ----------
+async function loadData(offerRestore){
+  const r = await api("/api/todos");
+  if (!r.ok){ toast("加载失败", true); return false; }
+  store.items = r.data.items || [];
+  store.revision = r.data.revision || "";
+  persistBaseline();
+  render();
+  if (offerRestore) maybeRestorePending();
+  return true;
 }
 
-function renderStats(s){
-  if (!s) return;
+function maybeRestorePending(){
+  let pending = null;
+  try{ pending = JSON.parse(localStorage.getItem(LS_PENDING) || "null"); }catch(e){}
+  if (!pending || !Array.isArray(pending.patches) || !pending.patches.length) return;
+  // 若关闭页面时 sendBeacon 已把创建类 patch 落盘（正文已存在于服务器数据），静默清理，避免恢复造成重复
+  const textSet = new Set(store.items.map(t => (t.text || "").trim()));
+  const onlyCreates = pending.patches.every(p => p.op === "create");
+  if (onlyCreates && pending.patches.every(p => textSet.has(((p.task || {}).text || "").trim()))){
+    clearPending();
+    return;
+  }
+  const n = pending.patches.length;
+  showConfirm2(
+    "检测到未保存的更改",
+    '<div class="conflict-list">上次关闭页面时有 <b>' + n + '</b> 条更改尚未保存到文件。<br>是否恢复并继续暂存？</div>',
+    "恢复更改", function(){
+      store.patches = pending.patches;
+      store.patches.forEach(p => applyPatchLocal(p));
+      markDirty();
+      persistPending();
+      toast("已恢复 " + n + " 条未保存更改，可继续编辑或点「保存更改」落盘");
+    },
+    "放弃", function(){
+      clearPending();
+      toast("已放弃上次未保存的更改");
+    }
+  );
+}
+
+// ---------- 渲染 ----------
+function render(){
+  renderStats();
+  renderTabs();
+  renderTagFilter();
+  renderList();
+  updateSaveBtn();
+  const pending = store.patches.length;
+  $("genTime").textContent = "共 " + store.items.length + " 条待办 · " +
+    (pending ? "本地暂存 " + pending + " 条未保存" : "已同步本地存储");
+}
+
+function localStats(){
+  const s = { total: store.items.length, in_progress: 0, todo: 0, done: 0, urgent: 0 };
+  const now = Date.now();
+  store.items.forEach(t => {
+    const isU = (t.is_urgent !== undefined) ? t.is_urgent : localUrgent(t, now);
+    if (t.status === "进行中") s.in_progress++;
+    else if (t.status === "待开始") s.todo++;
+    else if (t.status === "结束") s.done++;
+    if (isU && t.status !== "结束") s.urgent++;
+  });
+  return s;
+}
+
+function renderStats(){
+  const s = localStats();
   $("stats").innerHTML =
     '<div class="stat blue"><div class="num">'+s.in_progress+'</div><div class="lbl">进行中</div></div>'+
     '<div class="stat gray"><div class="num">'+s.todo+'</div><div class="lbl">待开始</div></div>'+
@@ -252,7 +404,8 @@ function renderStats(s){
     '<div class="stat"><div class="num">'+s.total+'</div><div class="lbl">总计</div></div>';
 }
 
-function renderTabs(s){
+function renderTabs(){
+  const s = localStats();
   const counts = { "all": s.total, "进行中": s.in_progress, "待开始": s.todo, "结束": s.done, "urgent": s.urgent };
   document.querySelectorAll("#tabs .tab").forEach(t=>{
     const key = t.getAttribute("data-s");
@@ -264,40 +417,94 @@ function renderTabs(s){
   });
 }
 
-function esc(s){
-  return String(s == null ? "" : s)
-    .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
-    .replace(/"/g,"&quot;").replace(/'/g,"&#39;");
+function renderTagFilter(){
+  const sel = $("tagFilter");
+  const tagCounts = {};
+  store.items.forEach(t => (t.tags||[]).forEach(tg => { tagCounts[tg] = (tagCounts[tg]||0) + 1; }));
+  const tags = Object.keys(tagCounts).sort((a,b)=>a.localeCompare(b,"zh"));
+  const cur = currentTag;
+  sel.innerHTML = '<option value="">全部标签</option>' + tags.map(tg =>
+    '<option value="'+esc(tg)+'">#'+esc(tg)+' ('+tagCounts[tg]+')</option>').join("");
+  sel.value = cur;
 }
 
-function renderList(items){
+function sortItems(items){
+  return items.slice().sort((a,b)=>{
+    const ad = dueVal(a.due), bd = dueVal(b.due);
+    if ((ad==null) !== (bd==null)) return ad==null ? 1 : -1;
+    if (ad!=null && bd!=null && ad!==bd) return ad-bd;
+    const now = Date.now();
+    const ar = (a.importance==="重要"?1:0) + (((a.is_urgent!==undefined)?a.is_urgent:localUrgent(a,now))?1:0);
+    const br = (b.importance==="重要"?1:0) + (((b.is_urgent!==undefined)?b.is_urgent:localUrgent(b,now))?1:0);
+    if (ar!==br) return br-ar;
+    return String(a.created||"").localeCompare(String(b.created||""));
+  });
+}
+
+function filteredItems(){
+  const kw = currentKeyword.toLowerCase();
+  const byId = itemsById();
+  let list = store.items.filter(t => {
+    if (currentState !== "all"){
+      if (currentState === "urgent"){
+        const isU = (t.is_urgent!==undefined)?t.is_urgent:localUrgent(t,Date.now());
+        if (!isU || t.status === "结束") return false;
+      } else if (t.status !== currentState){
+        return false;
+      }
+    }
+    if (currentTag && !(t.tags||[]).includes(currentTag)) return false;
+    if (kw){
+      if (!( (t.text||"").toLowerCase().includes(kw)
+          || (t.note||"").toLowerCase().includes(kw)
+          || (t.workspace||"").toLowerCase().includes(kw) )) return false;
+    }
+    return true;
+  });
+  list.forEach(t => {
+    t.__blocked = (t.blocked !== undefined ? t.blocked : false) ||
+      (t.depends_on||[]).some(d => { const dt = byId[d]; return !dt || dt.status !== "结束"; });
+  });
+  return sortItems(list);
+}
+
+function renderList(){
   const listEl = $("list");
   const emptyEl = $("empty");
-  window.tasksById = {};
-  if (!items || items.length === 0){ listEl.innerHTML = ""; emptyEl.style.display = "block"; return; }
+  window.tasksById = itemsById();
+  const items = filteredItems();
+  if (!items.length){ listEl.innerHTML = ""; emptyEl.style.display = "block"; return; }
   emptyEl.style.display = "none";
-  items.forEach(t => window.tasksById[t.id] = t);
   listEl.innerHTML = items.map(renderCard).join("");
 }
 
 function renderCard(t){
   const cls = STATUS_CLASS[t.status] || "other";
   const done = t.status === "结束";
+  const isLocal = String(t.id).indexOf("local-") === 0;
   const tags = [];
   if (t.importance === "重要") tags.push('<span class="tag imp">重要</span>');
-  if (t.is_urgent) tags.push('<span class="tag urgent">紧急</span>');
+  if (t.is_urgent !== undefined ? t.is_urgent : localUrgent(t, Date.now())) tags.push('<span class="tag urgent">紧急</span>');
   if (t.due) tags.push('<span class="tag due">截止 ' + esc(t.due) + '</span>');
-  if (t.blocked) tags.push('<span class="tag deps">被依赖阻塞</span>');
+  (t.tags||[]).forEach(tg => tags.push('<span class="tag lbl">#' + esc(tg) + '</span>'));
+  if (t.__blocked) tags.push('<span class="tag deps">被依赖阻塞</span>');
   if (t.parent) tags.push('<span class="tag child">子任务</span>');
+  if (isLocal) tags.push('<span class="tag due">未保存</span>');
   const meta = [];
-  if (t.workspace) meta.push('<span class="ws">📁 ' + esc(t.workspace) + '</span>');
+  if (t.workspace) meta.push(
+    '<span class="ws-wrap"><span class="ws">📁 ' + esc(t.workspace) + '</span>' +
+    '<div class="ws-menu" data-path="' + esc(t.workspace) + '">' +
+      '<button class="ws-item" data-ws-act="copy">复制路径</button>' +
+      '<button class="ws-item" data-ws-act="open">打开目录</button>' +
+      '<button class="ws-item" data-ws-act="cursor">用 Cursor 打开</button>' +
+    '</div></span>');
   if (t.date) meta.push('📅 ' + esc(t.date));
   if (t.created) meta.push('创建 ' + esc(t.created));
   if (t.updated) meta.push('更新 ' + esc(t.updated));
   const depsTxt = (t.depends_on && t.depends_on.length) ? '依赖: ' + esc(t.depends_on.join(', ')) : '';
   const actions = renderActions(t);
   return '' +
-    '<div class="card' + (t.blocked ? " blocked" : "") + '">' +
+    '<div class="card' + (t.__blocked ? " blocked" : "") + (isLocal ? " local" : "") + '">' +
       '<div class="mark ' + cls + '">' + STATUS_MARK[t.status] + '</div>' +
       '<div class="body">' +
         '<div class="row1"><span class="id">' + esc(t.id) + '</span><span class="title' + (done?' done-text':'') + '">' + esc(t.text) + '</span></div>' +
@@ -311,76 +518,319 @@ function renderCard(t){
 }
 
 function renderActions(t){
-  const a = [];
   const id = t.id;
-  if (t.status === "进行中"){ a.push(mbtn("完成", "mb-done", id, "done")); a.push(mbtn("改为待开始", "mb-reopen", id, "todo")); }
-  else if (t.status === "待开始"){ a.push(mbtn("开始", "mb-start", id, "progress")); a.push(mbtn("完成", "mb-done", id, "done")); }
-  else if (t.status === "结束"){ a.push(mbtn("重开", "mb-reopen", id, "progress")); a.push(mbtn("改待开始", "mb-reopen", id, "todo")); }
-  else { a.push(mbtn("开始", "mb-start", id, "progress")); }
-  a.push(mbtn("编辑", "mb-edit", id, "edit"));
-  a.push(mbtn("删除", "mb-del", id, "del"));
-  return a.join("");
+  const opts = STATUSES.map(s =>
+    '<option value="' + s + '"' + (s === t.status ? ' selected' : '') + '>' + s + '</option>'
+  ).join('');
+  return '<select class="status-select" data-id="' + id + '" data-act="status" title="修改状态">' + opts + '</select>' +
+         mbtn("编辑", "mb-edit", id, "edit") +
+         mbtn("删除", "mb-del", id, "del");
 }
 
 function mbtn(label, cls, id, act){
   return '<button class="mini-btn ' + cls + '" data-id="' + id + '" data-act="' + act + '">' + label + '</button>';
 }
 
+// ---------- 工作空间浮动菜单：跟随鼠标位置（以鼠标位置为弹出中点） ----------
+let lastMouse = { x: 0, y: 0 };
+function visibleWsMenu(){
+  const menu = document.querySelector(".ws-menu");
+  return (menu && getComputedStyle(menu).display !== "none") ? menu : null;
+}
+document.addEventListener("mousemove", function(ev){
+  lastMouse.x = ev.clientX; lastMouse.y = ev.clientY;
+  // 菜单已显示且鼠标不在菜单内时，跟随鼠标移动（鼠标进入菜单后锁定，避免抖动）
+  const menu = visibleWsMenu();
+  if (menu && !menu.contains(ev.target)) positionWsMenu(menu);
+});
+document.addEventListener("mouseover", function(ev){
+  const wrap = ev.target && ev.target.closest ? ev.target.closest(".ws-wrap") : null;
+  if (!wrap) return;
+  const menu = wrap.querySelector(".ws-menu");
+  if (menu) positionWsMenu(menu);
+});
+function positionWsMenu(menu){
+  const w = menu.offsetWidth || 160;
+  const h = menu.offsetHeight || 118;
+  // 以鼠标位置为弹出中点：水平居中，垂直略低于光标（避免盖住光标与路径文本）
+  let x = lastMouse.x - Math.round(w/2);
+  let y = lastMouse.y + 14;
+  x = Math.max(8, Math.min(x, window.innerWidth - w - 8));
+  y = Math.max(8, Math.min(y, window.innerHeight - h - 8));
+  menu.style.left = x + "px";
+  menu.style.top = y + "px";
+}
+
 // 按钮事件委托（避免内联回调的闭包/转义问题）
 document.addEventListener("click", function(ev){
+  var wsItem = ev.target && ev.target.closest ? ev.target.closest(".ws-item") : null;
+  if (wsItem){
+    ev.stopPropagation();
+    var menu = wsItem.closest(".ws-menu");
+    var wsPath = menu.getAttribute("data-path");
+    var wsAct = wsItem.getAttribute("data-ws-act");
+    if (wsAct === "copy") copyWorkspace(wsPath);
+    else if (wsAct === "open") openWorkspace(wsPath, "open");
+    else if (wsAct === "cursor") openWorkspace(wsPath, "cursor");
+    return;
+  }
   var b = ev.target && ev.target.closest ? ev.target.closest(".mini-btn") : null;
   if (!b) return;
   ev.stopPropagation();
   var id = b.getAttribute("data-id");
   var act = b.getAttribute("data-act");
   var t = (window.tasksById || {})[id] || {};
-  if (act === "progress") setStatus(id, "进行中");
-  else if (act === "todo") setStatus(id, "待开始");
-  else if (act === "done") setStatus(id, "结束");
-  else if (act === "edit") openEdit(id);
+  if (act === "edit") openEdit(id);
   else if (act === "del") askDelete(id, t.text);
 });
 
-// ---------- 状态流转 ----------
-async function setStatus(id, status){
-  const r = await api("/api/todos/" + id + "/status", "PATCH", { status });
-  if (r.ok){ toast("已更新为「" + status + "」"); load(); return; }
-  if (r.status === 409 && r.data && r.data.conflicts && r.data.conflicts.length){
-    confirmAction = () => setStatusForce(id, status);
-    showConfirm("存在冲突，确认强制推进？", renderConflicts(r.data.conflicts, status), "强制推进");
+// 状态下拉修改（本地暂存 + 入队 patch）
+document.addEventListener("change", function(ev){
+  var sel = ev.target && ev.target.closest ? ev.target.closest(".status-select") : null;
+  if (!sel) return;
+  var id = sel.getAttribute("data-id");
+  var newStatus = sel.value;
+  var t = (window.tasksById || {})[id] || {};
+  if (!newStatus || newStatus === (t.status || "")) return;
+  localSetStatus(id, newStatus);
+});
+
+// ---------- 工作空间路径操作 ----------
+async function copyWorkspace(path){
+  try{
+    await navigator.clipboard.writeText(path);
+    toast("已复制路径");
+  }catch(e){
+    const ta = document.createElement("textarea");
+    ta.value = path;
+    ta.style.position = "fixed"; ta.style.opacity = "0";
+    document.body.appendChild(ta); ta.select();
+    try{ document.execCommand("copy"); toast("已复制路径"); }
+    catch(e2){ toast("复制失败", true); }
+    document.body.removeChild(ta);
+  }
+}
+
+async function openWorkspace(path, kind){
+  const r = await api("/api/workspace/" + kind, "POST", { path });
+  if (r.ok && r.data && r.data.ok){ toast(r.data.message || "成功"); }
+  else toast((r.data && r.data.message) || "操作失败", true);
+}
+
+// ---------- 本地变更（不写文件，仅暂存） ----------
+function markDirty(){
+  persistPending();
+  render();
+}
+
+function applyPatchLocal(p){
+  // 把一条 patch 反映到本地内存列表（用于保存失败后恢复暂存、或重启恢复）
+  if (p.op === "create"){
+    if (!findItem(p.temp_id)) store.items.push(buildLocalItem(p.temp_id, p.task || {}));
+  } else if (p.op === "status"){
+    const t = findItem(p.id);
+    if (t){ t.status = p.status; t.updated = nowStr(); t.is_urgent = localUrgent(t, Date.now()); }
+  } else if (p.op === "update"){
+    const t = findItem(p.id);
+    if (t){ Object.assign(t, fieldsFromForm(p.fields || {})); t.updated = nowStr(); t.is_urgent = localUrgent(t, Date.now()); }
+  } else if (p.op === "delete"){
+    store.items = store.items.filter(x => x.id !== p.id);
+  }
+}
+
+function buildLocalItem(tempId, form){
+  const t = {
+    id: tempId,
+    text: form.text || "",
+    status: form.status || "进行中",
+    importance: form.importance || "不重要",
+    urgent: form.urgent || "不紧急",
+    due: form.due || null,
+    note: form.note || "",
+    workspace: form.workspace || "",
+    docs: splitList(form.docs),
+    links: splitList(form.links),
+    tags: splitList(form.tags),
+    depends_on: splitList(form.deps),
+    parent: form.parent || "",
+    date: form.date || todayStr(),
+    created: nowStr(),
+    updated: null,
+    blocked: false,
+  };
+  t.is_urgent = localUrgent(t, Date.now());
+  return t;
+}
+
+function fieldsFromForm(form){
+  return {
+    text: (form.text||"").trim(),
+    status: form.status,
+    importance: form.importance,
+    urgent: form.urgent,
+    due: (form.due||"").trim() || null,
+    note: (form.note||"").trim(),
+    workspace: (form.workspace||"").trim(),
+    docs: splitList(form.docs),
+    links: splitList(form.links),
+    tags: splitList(form.tags),
+    depends_on: splitList(form.deps),
+    parent: (form.parent||"").trim(),
+  };
+}
+
+function localCreate(form){
+  const tempId = "local-" + Date.now() + "-" + (tempSeq++);
+  store.items.push(buildLocalItem(tempId, form));
+  store.patches.push({ op: "create", temp_id: tempId, task: Object.assign({}, form, { date: form.date || todayStr() }) });
+  markDirty();
+  render();
+}
+
+function localUpdate(id, form){
+  const t = findItem(id);
+  if (!t) return;
+  const fields = fieldsFromForm(form);
+  Object.assign(t, fields);
+  t.updated = nowStr();
+  t.is_urgent = localUrgent(t, Date.now());
+  // 若编辑的是未保存的新建任务，直接改对应 create patch；否则入队 update patch
+  const cp = store.patches.find(p => p.op === "create" && p.temp_id === id);
+  if (cp){
+    Object.assign(cp.task, form);
+  } else {
+    store.patches.push({ op: "update", id: id, fields: form });
+  }
+  markDirty();
+}
+
+function localSetStatus(id, status){
+  const t = findItem(id);
+  if (!t || t.status === status) return;
+  t.status = status;
+  t.updated = nowStr();
+  t.is_urgent = localUrgent(t, Date.now());
+  const cp = store.patches.find(p => p.op === "create" && p.temp_id === id);
+  if (cp){
+    cp.task.status = status;
+  } else {
+    store.patches.push({ op: "status", id: id, status: status });
+  }
+  markDirty();
+}
+
+function localDelete(id){
+  const t = findItem(id);
+  if (!t) return;
+  store.items = store.items.filter(x => x.id !== id);
+  const cp = store.patches.find(p => p.op === "create" && p.temp_id === id);
+  if (cp){
+    // 未保存的新建任务：直接移除对应 create patch
+    store.patches = store.patches.filter(p => p !== cp);
+  } else {
+    store.patches.push({ op: "delete", id: id });
+  }
+  markDirty();
+}
+
+// ---------- 保存：一次性对比最新文件并应用 patch ----------
+async function doSave(){
+  if (saving) return;
+  if (!store.patches.length){ toast("没有待保存的更改"); return; }
+  saving = true;
+  updateSaveBtn();
+  const r = await api("/api/todos/apply-patches", "POST", {
+    revision: store.revision,
+    patches: store.patches,
+  });
+  saving = false;
+  if (!r.ok){
+    toast((r.data && r.data.error) || "保存失败", true);
+    updateSaveBtn();
     return;
   }
-  toast((r.data && r.data.error) || "操作失败", true);
+  const d = r.data;
+  const failed = d.failed || [];
+  const failedKeys = new Set(failed.map(keyOfFail));
+  // 成功部分从队列移除：只保留失败（未落盘）的 patch
+  store.patches = store.patches.filter(p => failedKeys.has(keyOfPatch(p)));
+  store.revision = d.revision || store.revision;
+  store.lastSavedAt = Date.now();
+  persistBaseline();
+  clearPending();
+  // 用保存后的最新文件内容刷新本地列表（id_map 已由后端落盘）
+  await loadData(false);
+  // 重新应用仍未保存（失败）的 patch 到本地列表
+  store.patches.forEach(p => applyPatchLocal(p));
+  markDirty();
+
+  if (d.external_changed) toast("检测到外部修改，更改已合并到最新文件");
+  const dup  = failed.filter(f => f.reason === "duplicate");
+  const conf = failed.filter(f => f.reason === "conflict");
+  const gone = failed.filter(f => f.reason === "not_found" || f.reason === "unknown_op" || f.reason === "invalid_patch" || f.reason === "text 不能为空");
+  for (const f of gone){
+    store.patches = store.patches.filter(p => keyOfPatch(p) !== keyOfFail(f));
+  }
+  const keep = failed.filter(f => f.reason === "duplicate" || f.reason === "conflict");
+  if (!keep.length){
+    if (!d.external_changed) toast("已保存 " + d.saved + " 条更改");
+    markDirty();
+    return;
+  }
+  // 有失败项：让用户决定强制应用或放弃
+  showConfirm2(
+    "部分更改未保存",
+    buildFailHtml(dup, conf, d.saved, gone.length),
+    "强制应用全部", function(){
+      for (const f of keep){
+        const p = store.patches.find(x => keyOfPatch(x) === keyOfFail(f));
+        if (p) p.force = true;
+      }
+      markDirty();
+      toast("已标记强制应用，正在再次保存…");
+      doSave();
+    },
+    "取消这些更改", function(){
+      for (const f of keep){
+        store.patches = store.patches.filter(p => keyOfPatch(p) !== keyOfFail(f));
+      }
+      markDirty();
+      toast("已放弃 " + keep.length + " 条更改");
+    }
+  );
+  markDirty();
 }
 
-async function setStatusForce(id, status){
-  const r = await api("/api/todos/" + id + "/status", "PATCH", { status, force: true });
-  if (r.ok){ toast("已强制更新为「" + status + "」"); load(); }
-  else toast((r.data && r.data.error) || "操作失败", true);
-}
-
-function renderConflicts(conflicts, status){
-  const lines = conflicts.map(c=>{
-    const kind = c.kind === "children" ? "未完成子任务" : "前置依赖";
-    return '<div>· [' + kind + '] ' + esc(c.id) + '（' + esc(c.status) + '）' + (c.text ? '：' + esc(c.text) : '') + '</div>';
-  });
-  return '<div class="conflict-list">目标状态「' + esc(status) + '」被以下未完成项阻塞：' + lines.join("") + '</div>';
+function buildFailHtml(dup, conf, saved, gone){
+  let html = '<div class="conflict-list">已保存 ' + saved + ' 条，以下 ' + (dup.length + conf.length) + ' 条需要处理：</div>';
+  if (dup.length){
+    html += '<div class="dup-list">' + dup.map(f =>
+      '<div>· 新任务与已有任务' + (f.reason === "duplicate" ? "重复" : "") + '：' +
+      ((f.duplicates||[]).map(d => esc(d.id) + '（' + esc(d.status) + '）' + esc(d.text)).join('；') || esc(f.temp_id || f.id || "")) +
+      '</div>').join("") + '</div>';
+  }
+  if (conf.length){
+    html += '<div class="conflict-list">' + conf.map(f =>
+      '<div>· ' + esc(f.id || f.temp_id || "") + ' 被' +
+      ((f.conflicts||[]).map(c => '[' + (c.kind === "children" ? "未完成子任务" : "前置依赖") + '] ' + esc(c.id) + '（' + esc(c.status) + '）').join('，') || "守卫拦截") +
+      '</div>').join("") + '</div>';
+  }
+  return html + '<div class="hint">「强制应用全部」会忽略重复/依赖守卫重试；「取消这些更改」则放弃这 ' + (dup.length + conf.length) + ' 条。</div>';
 }
 
 // ---------- 新增 / 编辑 ----------
 function openCreate(){
   editingId = null;
   $("taskModalTitle").textContent = "新增待办";
-  ["f_text","f_due","f_date","f_workspace","f_note","f_docs","f_links","f_deps","f_parent"].forEach(id=>$(id).value="");
+  ["f_text","f_due","f_date","f_workspace","f_note","f_docs","f_links","f_tags","f_deps","f_parent"].forEach(id=>$(id).value="");
   $("f_status").value = "进行中"; $("f_importance").value = "不重要"; $("f_urgent").value = "不紧急";
   openModal("taskOverlay");
   $("f_text").focus();
 }
 
-async function openEdit(id){
-  const r = await api("/api/todos/" + id);
-  if (!r.ok){ toast("读取失败", true); return; }
-  const t = r.data;
+function openEdit(id){
+  const t = findItem(id);
+  if (!t){ toast("任务不存在", true); return; }
   editingId = id;
   $("taskModalTitle").textContent = "编辑 " + id;
   $("f_text").value = t.text || "";
@@ -393,6 +843,7 @@ async function openEdit(id){
   $("f_note").value = t.note || "";
   $("f_docs").value = (t.docs||[]).join("; ");
   $("f_links").value = (t.links||[]).join("; ");
+  $("f_tags").value = (t.tags||[]).join("; ");
   $("f_deps").value = (t.depends_on||[]).join("; ");
   $("f_parent").value = t.parent || "";
   openModal("taskOverlay");
@@ -409,92 +860,90 @@ function collectForm(){
     note: $("f_note").value.trim(),
     docs: $("f_docs").value.trim(),
     links: $("f_links").value.trim(),
+    tags: $("f_tags").value.trim(),
     deps: $("f_deps").value.trim(),
     parent: $("f_parent").value.trim(),
   };
 }
 
-async function submitTask(){
+function submitTask(){
   const form = collectForm();
   if (!form.text){ toast("任务内容不能为空", true); return; }
   if (editingId){
-    await updateTask(editingId, form);
+    localUpdate(editingId, form);
+    toast("已暂存修改，点「保存更改」落盘");
   } else {
+    // 本地轻量查重（完整查重由保存时后端执行）
+    const exact = store.items.find(x => (x.text||"").trim() === form.text);
+    if (exact){
+      showConfirm2(
+        "检测到相同任务",
+        '<div class="dup-list">· [相同] ' + esc(exact.id) + '（' + esc(exact.status) + '）' + esc(exact.text) + '</div>' +
+        '<div class="conflict-list">仍要新建吗？（保存时后端会再次做完整查重）</div>',
+        "仍要新建", function(){
+          localCreate(form);
+          closeModal("taskOverlay");
+          toast("已暂存新增，点「保存更改」落盘");
+        },
+        "取消"
+      );
+      return;
+    }
     form.date = $("f_date").value.trim();
-    await createTask(form);
+    localCreate(form);
+    closeModal("taskOverlay");
+    toast("已暂存新增，点「保存更改」落盘");
   }
-}
-
-async function createTask(form){
-  const r = await api("/api/todos", "POST", form);
-  if (r.status === 201){ toast("已新增 " + r.data.id); closeModal("taskOverlay"); load(); return; }
-  if (r.status === 409 && r.data && r.data.duplicates && r.data.duplicates.length){
-    confirmAction = () => createTaskForce(form);
-    showConfirm("检测到相同 / 近似任务", renderDuplicates(r.data.duplicates) +
-      '<div class="conflict-list">仍要新建，还是合并到已有任务？</div>', "仍要新建");
-    return;
-  }
-  toast((r.data && r.data.error) || "新增失败", true);
-}
-
-async function createTaskForce(form){
-  const r = await api("/api/todos", "POST", { ...form, force: true });
-  if (r.status === 201){ toast("已强制新增 " + r.data.id); closeModal("taskOverlay"); load(); }
-  else toast((r.data && r.data.error) || "新增失败", true);
-}
-
-function renderDuplicates(dups){
-  const lines = dups.map(d=>{
-    const kind = d.kind === "exact" ? "相同" : ("近似 " + d.score + "%");
-    return '<div>· [' + kind + '] ' + esc(d.id) + '（' + esc(d.status) + '）' + esc(d.text) + '</div>';
-  });
-  return '<div class="dup-list">' + lines.join("") + '</div>';
-}
-
-async function updateTask(id, form){
-  const r = await api("/api/todos/" + id, "PUT", form);
-  if (r.ok){ toast("已保存"); closeModal("taskOverlay"); load(); return; }
-  if (r.status === 409 && r.data && r.data.conflicts && r.data.conflicts.length){
-    confirmAction = () => updateTaskForce(id, form);
-    showConfirm("存在冲突，确认强制保存？", renderConflicts(r.data.conflicts, form.status), "强制保存");
-    return;
-  }
-  toast((r.data && r.data.error) || "保存失败", true);
-}
-
-async function updateTaskForce(id, form){
-  const r = await api("/api/todos/" + id, "PUT", { ...form, force: true });
-  if (r.ok){ toast("已强制保存"); closeModal("taskOverlay"); load(); }
-  else toast((r.data && r.data.error) || "保存失败", true);
 }
 
 // ---------- 删除 ----------
 function askDelete(id, text){
-  confirmAction = () => doDelete(id);
-  showConfirm("确认删除该待办？",
+  showConfirm2(
+    "确认删除该待办？",
     '<div class="conflict-list">' + esc(id) + '：' + esc(text) + '<br>删除后将同时清理其他任务对它的依赖/父任务引用。</div>',
-    "删除");
-}
-
-async function doDelete(id){
-  const r = await api("/api/todos/" + id, "DELETE");
-  if (r.ok){ toast("已删除 " + id); load(); }
-  else toast((r.data && r.data.error) || "删除失败", true);
+    "删除", function(){ localDelete(id); toast("已暂存删除，点「保存更改」落盘"); },
+    "取消"
+  );
 }
 
 // ---------- 弹窗 / 确认 ----------
 function openModal(id){ $(id).classList.add("open"); }
-function closeModal(id){ $(id).classList.remove("open"); if (id === "confirmOverlay") confirmAction = null; }
+function closeModal(id){
+  $(id).classList.remove("open");
+  if (id === "confirmOverlay"){ confirmAction = null; confirmAltAction = null; }
+}
 
-function showConfirm(title, bodyHtml, okLabel){
+function showConfirm(title, bodyHtml, okLabel, okFn){
+  confirmAction = okFn || null;
+  confirmAltAction = null;
+  $("confirmCancelBtn").style.display = "none";
+  $("confirmAltBtn").style.display = "none";
   $("confirmTitle").textContent = title;
   $("confirmBody").innerHTML = bodyHtml;
   $("confirmOkBtn").textContent = okLabel || "确定";
   openModal("confirmOverlay");
 }
+
+function showConfirm2(title, bodyHtml, okLabel, okFn, altLabel, altFn){
+  confirmAction = okFn || null;
+  confirmAltAction = altFn || null;
+  $("confirmCancelBtn").style.display = altFn ? "none" : "none";
+  $("confirmAltBtn").style.display = altFn ? "inline-block" : "none";
+  $("confirmAltBtn").textContent = altLabel || "取消";
+  $("confirmTitle").textContent = title;
+  $("confirmBody").innerHTML = bodyHtml;
+  $("confirmOkBtn").textContent = okLabel || "确定";
+  openModal("confirmOverlay");
+}
+
 function confirmOk(){
-  closeModal("confirmOverlay");
   const fn = confirmAction; confirmAction = null;
+  closeModal("confirmOverlay");
+  if (fn) fn();
+}
+function confirmAlt(){
+  const fn = confirmAltAction; confirmAltAction = null;
+  closeModal("confirmOverlay");
   if (fn) fn();
 }
 
@@ -503,11 +952,48 @@ document.getElementById("taskOverlay").addEventListener("click", e=>{
   if (e.target.id === "taskOverlay") closeModal("taskOverlay");
 });
 
-// ---------- 筛选 / 搜索 ----------
+// ---------- 筛选 / 搜索（本地过滤，即时生效） ----------
 document.querySelectorAll("#tabs .tab").forEach(t=>{
-  t.addEventListener("click", ()=>{ currentState = t.getAttribute("data-s"); load(); });
+  t.addEventListener("click", ()=>{ currentState = t.getAttribute("data-s"); render(); });
 });
-function onSearch(v){ currentKeyword = v.trim(); load(); }
+function onSearch(v){ currentKeyword = v.trim(); render(); }
+function onTagFilter(v){ currentTag = v; render(); }
+
+// ---------- 自动保存（间隔可配置，默认 10 分钟） ----------
+let autosaveTimer = null;
+function autosaveMin(){
+  const v = parseInt(localStorage.getItem(LS_AUTOSAVE) || "10", 10);
+  return v > 0 ? v : 0;
+}
+function setupAutosave(){
+  if (autosaveTimer) clearInterval(autosaveTimer);
+  const m = autosaveMin();
+  if (m > 0){
+    autosaveTimer = setInterval(function(){
+      if (store.patches.length && !saving) doSave();
+    }, m * 60 * 1000);
+  }
+  $("autosaveSel").value = String(m);
+}
+function onAutosaveChange(sel){
+  try{ localStorage.setItem(LS_AUTOSAVE, String(parseInt(sel.value, 10) || 0)); }catch(e){}
+  setupAutosave();
+  toast(sel.value === "0" ? "已关闭自动保存" : "自动保存间隔设为 " + sel.value + " 分钟");
+}
+
+// ---------- 保存按钮状态 ----------
+function updateSaveBtn(){
+  const n = store.patches.length;
+  $("dirtyBadge").textContent = n;
+  $("saveBtn").classList.toggle("dirty", n > 0 && !saving);
+  const sb = $("saveState");
+  if (saving) sb.textContent = "保存中…";
+  else if (n > 0) sb.textContent = "有 " + n + " 条未保存更改";
+  else if (store.lastSavedAt){
+    const d = new Date(store.lastSavedAt);
+    sb.textContent = "已保存 " + pad2(d.getHours()) + ":" + pad2(d.getMinutes());
+  } else sb.textContent = "";
+}
 
 // ---------- toast ----------
 let toastTimer = null;
@@ -519,6 +1005,16 @@ function toast(msg, isErr){
   toastTimer = setTimeout(()=>el.classList.remove("show"), 2600);
 }
 
+// ---------- 关闭 / 刷新页面时检测保存 ----------
+window.addEventListener("pagehide", function(){
+  if (!store.patches.length) return;
+  try{
+    const body = JSON.stringify({ revision: store.revision, patches: store.patches });
+    navigator.sendBeacon("/api/todos/apply-patches", new Blob([body], { type: "application/json" }));
+  }catch(e){}
+  // 兜底：未保存队列已随每次变更持久化到浏览器存储，下次打开可恢复
+});
+
 // 键盘：Esc 关闭弹窗
 document.addEventListener("keydown", e=>{
   if (e.key === "Escape"){ closeModal("taskOverlay"); closeModal("confirmOverlay"); }
@@ -528,7 +1024,8 @@ document.getElementById("taskOverlay").addEventListener("keydown", e=>{
   if (e.key === "Enter" && e.target.tagName !== "TEXTAREA"){ e.preventDefault(); submitTask(); }
 });
 
-load();
+setupAutosave();
+loadData(true);
 </script>
 </body>
 </html>

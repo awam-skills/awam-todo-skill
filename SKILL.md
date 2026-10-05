@@ -105,6 +105,7 @@ python ...\todo.py env --set path_style=posix --reformat-workspaces
 | 状态 | `--status` | 维护 / 进行中 / 结束 / 待开始 / 其他 | 进行中 |
 | 截止时间 | `--due` | 时间自动解析（见下方映射），未说→ 不设截止 | 无截止 |
 | 备注 | `--note` | 用户补充的说明 | 空 |
+| 标签 | `--tags` | 分类标签，多个用 `;` 分隔（如 `工作;学习`） | 空 |
 | 工作空间目录 | `--workspace` | 用户点名某项目/目录（如“放到 XX 项目”） | 空 |
 | 相关文档 | `--docs` | 相关文件/文档，多个用 `;` 分隔 | 空 |
 | 链接 | `--links` | 相关 URL，多个用 `;` 分隔 | 空 |
@@ -210,9 +211,10 @@ python ...\todo.py show T-20261002-005                                 # 查看�
 
 ```
 用户：记一下，明天上午十点前写好季度报告，重要，备注里带上Q3数据，放到 19AI 项目，
-      参考 data.xlsx，附上 https://example.com/report
+      参考 data.xlsx，附上 https://example.com/report，标签 工作;汇报
 → python ...\todo.py add --text "写好季度报告" --importance 重要 --due "明天 10:00" \
-    --note "带上Q3数据" --workspace "G:\Projects\19AI" --docs "data.xlsx" --links "https://example.com/report"
+    --note "带上Q3数据" --workspace "G:\Projects\19AI" --docs "data.xlsx" \
+    --links "https://example.com/report" --tags "工作;汇报"
 
 # 若 exit 3 且为相同任务 T-20261002-001，用户确认「更新」：
 → python ...\todo.py add --update-id T-20261002-001 --text "写好季度报告" --importance 重要 \
@@ -225,8 +227,9 @@ python ...\todo.py show T-20261002-005                                 # 查看�
 ## 数据与状态
 
 - **存储**：`storage/YYYY-MM-DD.md`，每个文件含头部 `归档: true/false` 与若干任务块
-  （`## T-YYYYMMDD-NNN` + `状态/重要/紧急/内容/父任务/备注/工作空间/文档/链接/依赖/来源/截止/创建` 行）。
-  `依赖: T-A; T-B` 记录该任务的前置依赖（任务 ID）；`父任务: T-X` 记录该子任务归属的主任务。
+  （`## T-YYYYMMDD-NNN` + `状态/重要/紧急/内容/父任务/备注/工作空间/文档/链接/标签/依赖/来源/截止/创建` 行）。
+  `依赖: T-A; T-B` 记录该任务的前置依赖（任务 ID）；`父任务: T-X` 记录该子任务归属的主任务；
+  `标签: 工作; 学习` 记录该任务的分类标签（用 `;` 分隔）。
 - **来源 `from`**：可选对象 `{type, url}`，记录待办来源（如某次 AI Agent 对话链接）。由
   `--from-type` / `--from-url` 写入；获取不到对话链接时留空（不落盘、不入索引）。
 - **ID**：`T-YYYYMMDD-NNN`，按当天递增，脚本自动生成。
@@ -246,7 +249,8 @@ python ...\todo.py show T-20261002-005                                 # 查看�
   "archived_files": ["YYYY-MM-DD", ...] }
 ```
 
-索引条目含 `depends_on`（前置依赖 ID 列表）、`blocked`（是否存在未结束前置依赖）与 `parent`（父任务 ID）字段。
+索引条目含 `depends_on`（前置依赖 ID 列表）、`blocked`（是否存在未结束前置依赖）、`parent`（父任务 ID）与
+`tags`（标签列表）字段。
 
 **排序规则**：向用户展示进度（`list` / `index`）时，若用户未特别说明，默认按
 “紧急 → 重要性（重要>不重要）→ 创建时间倒序”排列（脚本内实现）。
@@ -271,18 +275,32 @@ python "...\awam-todo\web\server.py" --no-browser # 只启动不打开浏览器
 ```
 
 - 服务常驻后台，浏览器访问 `http://127.0.0.1:8796/`。
-- 网页支持：列表展示与统计、按状态筛选、关键词搜索、**增删改查**、状态流转（开始/完成/重开/待开始）、
+- 网页支持：列表展示与统计、按状态/标签筛选、关键词搜索、**增删改查**、状态流转（开始/完成/重开/待开始）、
   重复检测确认（相同/近似）、依赖链与子任务冲突确认（可强制推进）。
-- 后端复用 `todo.py` 的解析 / 校验 / 索引逻辑，任何改动实时落盘到 `storage/` 并重建 `index.json`。
+- **标签**：新增/编辑可填标签（`;` 分隔）；卡片显示 `#标签` 徽章；工具栏有标签下拉过滤（含各标签计数）。
+- **工作空间浮动菜单跟随鼠标**：悬浮在项目路径上时，操作菜单（复制路径 / 打开目录 / 用 Cursor 打开）
+  以鼠标位置为弹出中点（水平居中、略低于光标），跟随鼠标移动；移入菜单后锁定，方便点击。
+- **延迟保存（patch 机制）**：网页操作不再实时写文件，所有修改先在浏览器内存 + 浏览器存储
+  （`localStorage`：`awam-todo:baseline` / `awam-todo:pending`）中暂存为 patch 队列；保存时一次性
+  `POST /api/todos/apply-patches` 对比**当时最新的文件**应用 patch 后落盘，避免与命令行并发写冲突。
+  保存时机：① 页面上点「保存更改」② 自动保存（间隔可在页面上配置，默认 10 分钟，存
+  `awam-todo:autosave-min`）③ 关闭/刷新页面时自动 `sendBeacon` 保存。未保存更改有徽章计数；
+  若上次关闭时有未保存更改，重开页面会提示恢复。
+- 后端复用 `todo.py` 的解析 / 校验 / 索引逻辑；命令行改动后网页端保存时会自动合并到最新文件
+  （`external_changed=true` 时提示「检测到外部修改，已合并保存」）。
 - 停止：在运行窗口按 Ctrl+C（或结束对应 python 进程）。
 
 REST API（仅本机）：
-- `GET    /api/todos`               列表 + 摘要（可 `?state=`、`?q=`）
+- `GET    /api/todos`               列表 + 摘要（可 `?state=`、`?q=`、`?tag=` 过滤；含 `revision` 文件指纹）
 - `GET    /api/todos/<id>`          单条任务
 - `POST   /api/todos`               新增（重复检测命中返回 409 + duplicates，可 `force` / `update_id`）
 - `PUT    /api/todos/<id>`          更新字段（含状态，带依赖/子任务守卫）
 - `PATCH  /api/todos/<id>/status`   仅改状态（冲突返回 409 + conflicts，可 `force`）
 - `DELETE /api/todos/<id>`          删除（同时清理其他任务对它的依赖 / 父任务引用）
+- `POST   /api/todos/apply-patches` 批量应用 patch 一次性落盘（网页延迟保存入口）
+  body: `{"revision": <GET /api/todos 返回的指纹>, "patches": [{"op":"create|update|status|delete", ...}]}`；
+  保存前对比 revision 与当前文件指纹，不一致时把 patch 应用到最新文件（合并语义），响应含
+  `external_changed`、`failed`（duplicate/conflict/not_found）、`id_map`（temp_id → 正式 ID）。
 
 启动时若发现旧服务已占端口，先结束原 python 进程再重启。网页改动与命令行 `todo.py` 完全同源，
 任一端操作后另一端看到的都是最新状态。

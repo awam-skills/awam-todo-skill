@@ -773,7 +773,10 @@ async function doSave(){
   }
   const keep = failed.filter(f => f.reason === "duplicate" || f.reason === "conflict");
   if (!keep.length){
-    if (!d.external_changed) toast("已保存 " + d.saved + " 条更改");
+    if (!d.external_changed){
+      // 服务端已做变更比较：changed=0 表示内容与磁盘一致，没有真正写盘
+      toast((d.changed || 0) === 0 ? "已是最新状态，无需保存" : "已保存 " + d.saved + " 条更改");
+    }
     markDirty();
     return;
   }

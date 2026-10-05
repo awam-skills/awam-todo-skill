@@ -32,7 +32,10 @@ POST /api/todos/apply-patches 约定：
   ]}
   保存前对比 revision 与当前文件指纹：不一致说明外部有并发修改，patch 会应用在
   最新文件内容上（合并语义），响应中 external_changed=true。
-  返回 {"ok", "saved", "failed", "external_changed", "id_map": {temp_id: 正式ID}, "revision"}。
+  落盘前会对每个日期文件做变更比较：将写入的内容与磁盘当前内容一致时跳过写文件/
+  删除/索引重建（没有变更就不保存），响应中 changed=实际写盘文件数。
+  返回 {"ok", "saved", "failed", "external_changed", "id_map": {temp_id: 正式ID},
+        "changed", "revision"}。
   failed 条目 reason 可为 duplicate（含 duplicates）/ conflict（含 conflicts）/ not_found 等；
   前端可对失败条目携带 force 重新提交。
 
@@ -246,6 +249,29 @@ def _revision():
         except OSError:
             continue
     return h.hexdigest()
+
+
+def _render_file(date, archived, tasks):
+    """生成将要写入的存储文件内容（与 todo.save_file 序列化一致，LF 归一），供变更比较。"""
+    parts = ["# 待办 %s" % date, "归档: %s" % ("true" if archived else "false"), "---"]
+    for t in tasks:
+        parts.append("")
+        parts.append(todo._write_block(t))
+    return "\n".join(parts) + "\n"
+
+
+def _file_content_matches(date, archived, tasks):
+    """磁盘当前内容与"将要写入的内容"是否一致（逻辑比较，行尾归一）。
+    一致则无需真正写盘/删除——即"没有变更就不保存"。"""
+    fp = todo._file_path(date)
+    new_content = _render_file(date, archived, tasks)
+    if not os.path.exists(fp):
+        return new_content == ""
+    try:
+        with open(fp, "r", encoding="utf-8") as f:
+            return f.read() == new_content
+    except OSError:
+        return False
 
 
 def _next_id_in_memory(files, date):
@@ -697,12 +723,17 @@ class Handler(BaseHTTPRequestHandler):
                     t["status"] = status
                 else:
                     fields = p.get("fields") or {}
+                    before_block = todo._write_block(t)
                     err = _apply_fields(
                         t, fields, now, is_new=False,
                         deps_resolver=lambda ds: [d for d in ds if d not in by_id and d != t.get("id")],
                     )
                     if err:
                         failed.append({"op": "update", "id": tid, "reason": err})
+                        continue
+                    after_block = todo._write_block(t)
+                    if after_block == before_block:
+                        # 字段无实际变化（提交内容与原值相同）：不刷新 updated，不算变更
                         continue
                     if "status" in fields:
                         conflicts = _guard_in_memory(t, t["status"], by_id)
@@ -737,19 +768,22 @@ class Handler(BaseHTTPRequestHandler):
                 saved += 1
             else:
                 failed.append({"op": op, "reason": "unknown_op"})
-        # 落盘：只写有改动的日期文件，保持归档不变量
+        # 落盘：先做变更比较——只有内容与磁盘不一致的日期文件才真正写入/删除
+        wrote_dates = []
         for date in sorted(changed_dates):
             data = files[date]
             if data["tasks"]:
                 data["archived"] = all(x["status"] == "结束" for x in data["tasks"])
-                todo.save_file(date, data["archived"], data["tasks"])
+                if not _file_content_matches(date, data["archived"], data["tasks"]):
+                    todo.save_file(date, data["archived"], data["tasks"])
+                    wrote_dates.append(date)
             else:
-                try:
-                    os.remove(todo._file_path(date))
-                except OSError:
-                    data["archived"] = False
-                    todo.save_file(date, False, data["tasks"])
-        if changed_dates:
+                fp = todo._file_path(date)
+                if os.path.exists(fp):
+                    os.remove(fp)
+                    wrote_dates.append(date)
+                # 文件本就不存在：无变更，不创建空文件
+        if wrote_dates:
             todo.build_index(now)
         self._json(200, {
             "ok": True,
@@ -757,6 +791,7 @@ class Handler(BaseHTTPRequestHandler):
             "failed": failed,
             "external_changed": external_changed,
             "id_map": id_map,
+            "changed": len(wrote_dates),
             "revision": _revision(),
         })
 

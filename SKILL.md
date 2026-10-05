@@ -283,6 +283,8 @@ python "...\awam-todo\web\server.py" --no-browser # 只启动不打开浏览器
 - **延迟保存（patch 机制）**：网页操作不再实时写文件，所有修改先在浏览器内存 + 浏览器存储
   （`localStorage`：`awam-todo:baseline` / `awam-todo:pending`）中暂存为 patch 队列；保存时一次性
   `POST /api/todos/apply-patches` 对比**当时最新的文件**应用 patch 后落盘，避免与命令行并发写冲突。
+  **保存前做变更比较**：将写入的内容与磁盘当前内容逐字对比，完全一致（如提交了与现值相同的字段、
+  相同状态、删除已不存在的任务）则不写文件、不重建索引（响应 `changed=0`），避免无谓重写。
   保存时机：① 页面上点「保存更改」② 自动保存（间隔可在页面上配置，默认 10 分钟，存
   `awam-todo:autosave-min`）③ 关闭/刷新页面时自动 `sendBeacon` 保存。未保存更改有徽章计数；
   若上次关闭时有未保存更改，重开页面会提示恢复。
@@ -300,7 +302,8 @@ REST API（仅本机）：
 - `POST   /api/todos/apply-patches` 批量应用 patch 一次性落盘（网页延迟保存入口）
   body: `{"revision": <GET /api/todos 返回的指纹>, "patches": [{"op":"create|update|status|delete", ...}]}`；
   保存前对比 revision 与当前文件指纹，不一致时把 patch 应用到最新文件（合并语义），响应含
-  `external_changed`、`failed`（duplicate/conflict/not_found）、`id_map`（temp_id → 正式 ID）。
+  `external_changed`、`failed`（duplicate/conflict/not_found）、`id_map`（temp_id → 正式 ID）、
+  `changed`（实际写盘文件数；0 表示内容与磁盘一致，未写入）。
 
 启动时若发现旧服务已占端口，先结束原 python 进程再重启。网页改动与命令行 `todo.py` 完全同源，
 任一端操作后另一端看到的都是最新状态。

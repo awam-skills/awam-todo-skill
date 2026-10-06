@@ -476,6 +476,15 @@ function check(name, cond, extra) {
   check("菜单项显示配置的编辑器名", /用Cursor打开/.test(cardHtml), cardHtml.slice(0, 120));
   check("编辑器可用时不再渲染旧 cursor 动作", !/data-ws-act="cursor"/.test(cardHtml));
 
+  // 只配了 path、没配 label 时必须回落到通用文案「用编辑器打开」，不能拼出「用打开」
+  global.__store.editor = { configured: true, available: true, label: null,
+                            path: "C:\\Apps\\Code.exe", error: null };
+  global.__render();
+  const genericHtml = els["list"].innerHTML;
+  check("label 未配置时回落为「用编辑器打开」", /用编辑器打开/.test(genericHtml), genericHtml.slice(0, 120));
+  check("回落时菜单项照常渲染", /data-ws-act="editor"/.test(genericHtml));
+  check("回落时不会拼出「用打开」", !/用打开/.test(genericHtml), genericHtml.slice(0, 120));
+
   global.__store.editor = { configured: false, available: false, label: null, path: null,
                             error: "未配置编辑器（env.json 缺少 editor.path）" };
   global.__render();

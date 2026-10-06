@@ -9,25 +9,37 @@ awam-todo —— 输入与管理 To-Do 的实现脚本。
   3. 支持完成 / 重新打开 / 标记进行中；某文件全部任务完成则自动标记归档
   4. 支持从自然语言解析时间（今天 / 明天 / 星期X / X天 / X小时 / 具体时间）作为兜底，
      主要语义解析由调用它的 Agent 在会话中完成。
+  5. 存储格式带 schema 版本（文件头 `schema: N`，index.json 的 schema_version），
+     旧版本用 `migrate` 迁移；按周统计一律以「周一」为起点。
+  6. 进入新月份时，把上月及更早的「可归档日文件」合并进 storage/archive/YYYY-MM.md。
 
 用法示例：
   python todo.py add --text "撰写季度报告" --importance 重要 --due "2026-10-05 10:00"
+  python todo.py add --text "背单词" --blocker "晚上刷手机" --counter "打开手机前先背 20 个"
   python todo.py add --text "预约体检" --urgent 紧急 --note "带身份证" --tags "健康;生活"
   python todo.py add --update-id T-20261002-001 --text "撰写季度报告"   # 确认后更新已有
   python todo.py add --force --text "撰写季度报告"                     # 跳过重复检测强制新建
   python todo.py check --text "撰写季度报告"                           # 只读查重
   python todo.py list
   python todo.py list --state urgent
+  python todo.py list --state overdue                                 # 逾期（带天数与出口提示）
   python todo.py done T-20261002-001
   python todo.py start T-20261002-001
   python todo.py reopen T-20261002-001
+  python todo.py postpone T-20261002-001 "下周一"                      # 调整计划（改截止日）
+  python todo.py postpone T-20261002-001 --clear                      # 取消截止日
   python todo.py dep T-20261002-001 --add T-20261002-003   # 设置依赖链
   python todo.py dep T-20261002-001                        # 查看依赖
   python todo.py add --text "子任务" --parent T-20261002-001   # 新增子任务（归属于主任务）
   python todo.py children T-20261002-001                   # 列出某主任务下的子任务
   python todo.py deparent T-20261002-003                   # 解除子任务归属
-  python todo.py archive 2026-10-01
+  python todo.py archive 2026-10-01                        # 强制归档某天
+  python todo.py archive-month --dry-run                   # 预览月度归档
+  python todo.py archive-month --month 2026-09             # 归档指定月份
+  python todo.py migrate                                   # 预览 schema 迁移
+  python todo.py migrate --apply                           # 执行迁移
   python todo.py show T-20261002-001
+  python todo.py show 2026-09                              # 查看月度归档文件
   python todo.py index --rebuild
 
 依赖链说明：
@@ -41,6 +53,14 @@ awam-todo —— 输入与管理 To-Do 的实现脚本。
   - 父任务完成硬检查：把存在未完成子任务的任务标记为「结束」时，脚本拒绝（exit 3），
     交由 AI 向用户确认后决定是否 --force 强制结束；子任务全部完成后父任务才能正常结束。
   - 父子归属可嵌套但不得成环；`children <id>` 查看某主任务的子任务，`deparent <id>` 解除归属。
+
+口径与不变量说明：
+  - **周口径**：任何按周统计一律以「周一」为起点（WEEK_START_ISO=1），周一 00:00 至周日 23:59。
+  - **月度归档**：进入新月份后，上月及更早的「全部任务已结束」的日文件会自动合并进
+    storage/archive/YYYY-MM.md，原日文件删除；未完成的文件不动。可用 `archive-month` 手动触发。
+  - **不推算原则**：缺失输入（无截止、无进展记录、样本不足）时派生指标一律返回 None，
+    调用方渲染「—」或「暂无推算」，禁止用 0 或假日期顶替。
+  - **置顶必带理由**：逾期 / 停滞 / 今日到期的任务会被置顶，并在索引里给出 pin_reason。
 """
 
 import argparse
@@ -67,6 +87,19 @@ DEFAULT_URGENT = "不紧急"
 # 重复检测：相似度阈值（含边界）；exit 3 = 发现近似重复，需确认
 SIMILAR_THRESHOLD = 0.72
 EXIT_NEEDS_CONFIRM = 3
+
+# ---- 存储格式版本与统计口径 ------------------------------------------------
+# schema 版本：写入每个存储文件的头部（`schema: N`）与 index.json 的 schema_version。
+# 旧文件（无 schema 行）一律视为 v1，用 `migrate` 升级到当前版本。
+SCHEMA_VERSION = 2
+# 周口径：一周从周一起算（isoweekday 1 = 周一）。所有按周统计统一用此口径，不得临时改。
+WEEK_START_ISO = 1
+# 停滞阈值（天）：进行中且距「更新（无则创建）」超过该天数 → 视为停滞，滚入今日
+STALL_DAYS = 3
+# 预计完成日所需的最小样本数（进展记录）。当前无进展记录层，恒为「暂无推算」。
+PROJECTION_MIN_SAMPLES = 3
+# 月度归档目录：storage/archive/YYYY-MM.md
+ARCHIVE_DIR = os.path.join(STORAGE_DIR, "archive")
 
 # 旧值 -> 新枚举 的迁移映射（兼容历史存储文件）
 _OLD_STATUS = {"open": "待开始", "in_progress": "进行中", "done": "结束"}
@@ -250,6 +283,31 @@ def _norm_path(p):
     return p
 
 
+# ---- 可覆盖的默认值（env.json -> defaults） ---------------------------------
+# 原则：默认值只是「预填建议」，新建/网页表单都可用它预填，用户随时可覆盖。
+# 例：env --set defaults.status=待开始   → 之后新增待办默认落在「待开始」。
+DEFAULT_KEYS = ("status", "importance", "urgent")
+
+
+def _default_of(key):
+    """取某字段的默认值：优先 env.json 的 defaults.<key>，否则用内置常量。"""
+    env = _load_env()
+    d = env.get("defaults") or {}
+    v = _norm(d.get(key))
+    if key == "status":
+        return v if v in STATUS_SET else DEFAULT_STATUS
+    if key == "importance":
+        return v if v in IMPORTANCE_SET else DEFAULT_IMPORTANCE
+    if key == "urgent":
+        return v if v in URGENT_SET else DEFAULT_URGENT
+    return None
+
+
+def _defaults_view():
+    """返回当前生效的默认值（供网页表单预填）。"""
+    return {k: _default_of(k) for k in DEFAULT_KEYS}
+
+
 # ---- 存储文件读写 ---------------------------------------------------------
 def _file_path(date):
     """date 为 'YYYY-MM-DD'。返回存储文件绝对路径。"""
@@ -272,7 +330,7 @@ def _parse_block(block_lines):
     task = {"id": None, "status": DEFAULT_STATUS, "importance": DEFAULT_IMPORTANCE, "text": "",
             "note": "", "workspace": "", "docs": [], "links": [], "depends_on": [], "due": None,
             "created": None, "updated": None, "urgent": DEFAULT_URGENT, "from": None,
-            "parent": "", "tags": []}
+            "parent": "", "tags": [], "blocker": "", "counter": "", "origin_date": ""}
     for line in block_lines:
         line = line.strip()
         if ":" not in line:
@@ -289,6 +347,10 @@ def _parse_block(block_lines):
             task["parent"] = v
         elif k == "备注":
             task["note"] = v
+        elif k == "障碍":
+            task["blocker"] = v
+        elif k == "对策":
+            task["counter"] = v
         elif k == "工作空间":
             task["workspace"] = _norm_path(v)
         elif k == "文档":
@@ -309,19 +371,23 @@ def _parse_block(block_lines):
             task["updated"] = v or None
         elif k == "紧急":
             task["urgent"] = _norm_urgent(v)
+        elif k == "原日期":
+            # 仅月度归档文件中的任务带此行：记录它原来属于哪个日文件
+            task["origin_date"] = v
     return task
 
 
 def load_file(date):
-    """读取存储文件，返回 {'archived': bool, 'tasks': [dict,...]}；不存在则返回空。"""
+    """读取存储文件，返回 {'archived': bool, 'schema': int, 'tasks': [dict,...]}；不存在则返回空。
+    schema：文件头 `schema: N` 的值；缺失视为 v1（旧格式）。"""
     fp = _file_path(date)
-    result = {"archived": False, "tasks": []}
+    result = {"archived": False, "schema": 1, "tasks": []}
     if not os.path.exists(fp):
         return result
     with open(fp, "r", encoding="utf-8") as f:
         lines = f.read().splitlines()
     i = 0
-    # 头：归档标记
+    # 头：归档标记 + schema 版本
     while i < len(lines):
         line = lines[i].strip()
         if line == "---":
@@ -329,6 +395,11 @@ def load_file(date):
             break
         if line.startswith("归档:"):
             result["archived"] = _norm(line[3:]).lower() in ("true", "1", "是")
+        elif line.startswith("schema:"):
+            try:
+                result["schema"] = int(_norm(line[7:]))
+            except ValueError:
+                result["schema"] = 1
         i += 1
     # 任务块（跳过空行，避免把空行误判成空任务块）
     blocks = []
@@ -368,6 +439,10 @@ def _write_block(t):
         lines.append("父任务: %s" % t["parent"])
     if t.get("note"):
         lines.append("备注: %s" % t["note"])
+    if t.get("blocker"):
+        lines.append("障碍: %s" % t["blocker"])
+    if t.get("counter"):
+        lines.append("对策: %s" % t["counter"])
     if t.get("workspace"):
         lines.append("工作空间: %s" % t["workspace"])
     if t.get("docs"):
@@ -391,10 +466,13 @@ def _write_block(t):
 
 
 def save_file(date, archived, tasks):
-    """写回存储文件，保持 header + 任务块。"""
+    """写回存储文件，保持 header（含 schema 版本）+ 任务块。"""
     fp = _file_path(date)
     os.makedirs(STORAGE_DIR, exist_ok=True)
-    parts = ["# 待办 %s" % date, "归档: %s" % ("true" if archived else "false"), "---"]
+    parts = ["# 待办 %s" % date,
+             "归档: %s" % ("true" if archived else "false"),
+             "schema: %d" % SCHEMA_VERSION,
+             "---"]
     for t in tasks:
         parts.append("")
         parts.append(_write_block(t))
@@ -437,8 +515,82 @@ def _is_urgent(t, now):
     return dv <= now + dt.timedelta(hours=24)
 
 
+# ---- 派生指标（不落库，全部实时算出） --------------------------------------
+# 不推算原则：输入缺失（无截止 / 已完成 / 样本不足）一律返回 None。
+# 调用方（CLI / 网页）必须把 None 渲染成「—」或「暂无推算」，禁止用 0、假日期顶替。
+def _days_unknown(v):
+    """None -> '—'；否则原样返回（渲染层的统一兜底）。"""
+    return "—" if v is None else v
+
+
+def _due_in_days(t, now):
+    """距截止还有几天（0 = 今天到期）；无截止或已完成返回 None。"""
+    if t.get("status") == "结束":
+        return None
+    dv = _due_value(t.get("due"))
+    if dv is None:
+        return None
+    return (dv.date() - now.date()).days
+
+
+def _overdue_days(t, now):
+    """逾期天数：仅当「未完成 + 截止已过（按自然日）」时返回 >=1 的整数，否则 None。
+    今天到期但时刻已过不算逾期（避免输出「逾期 0 天」）。"""
+    if t.get("status") == "结束":
+        return None
+    dv = _due_value(t.get("due"))
+    if dv is None:
+        return None
+    days = (now.date() - dv.date()).days
+    return days if days >= 1 else None
+
+
+def _stall_days(t, now):
+    """停滞天数：进行中且距「更新（无则创建）」>= STALL_DAYS 才返回天数，否则 None。"""
+    if t.get("status") != "进行中":
+        return None
+    ref = _due_value(t.get("updated") or t.get("created"))
+    if ref is None:
+        return None
+    days = (now.date() - ref.date()).days
+    return days if days >= STALL_DAYS else None
+
+
+def _projected_finish(t, now, samples=None):
+    """预计完成日。需要「进展记录」样本 >= PROJECTION_MIN_SAMPLES 才推算；
+    当前版本尚无进展记录层（见 优化建议.md 第 7/8 条），恒定返回 None → 渲染「暂无推算」。"""
+    samples = samples or []
+    if len(samples) < PROJECTION_MIN_SAMPLES:
+        return None
+    return None  # 预留：待记录层落地后按近 7 天均速推算
+
+
+def _pin_info(t, now):
+    """置顶信息与理由。返回 (rank, reason)；无理由返回 (None, None)。
+    rank: 0=逾期（红） 1=停滞（琥珀，容错） 2=今天到期。
+    置顶一定有理由——这是「为什么它在最前面」的唯一来源，不得静默重排。"""
+    od = _overdue_days(t, now)
+    if od is not None:
+        return 0, "逾期 %d 天，已滚入今日" % od
+    sd = _stall_days(t, now)
+    if sd is not None:
+        return 1, "已 %d 天未推进，滚入今日" % sd
+    dd = _due_in_days(t, now)
+    if dd == 0:
+        return 2, "今天到期"
+    return None, None
+
+
+def _week_bounds(d):
+    """按「周一为起点」的口径返回 (周一 date, 周日 date)。d 为 date 或 datetime。"""
+    day = d.date() if isinstance(d, dt.datetime) else d
+    start = day - dt.timedelta(days=(day.isoweekday() - WEEK_START_ISO) % 7)
+    return start, start + dt.timedelta(days=6)
+
+
 def _scan_files():
-    """返回 {date: {'archived':bool,'tasks':[...]}}，按日期升序。"""
+    """返回 {date: {'archived':bool,'schema':int,'tasks':[...]}}，按日期升序。
+    仅扫描 storage/YYYY-MM-DD.md（月度归档在 storage/archive/ 下，不参与日常索引）。"""
     if not os.path.isdir(STORAGE_DIR):
         return {}
     out = {}
@@ -454,27 +606,197 @@ def _scan_files():
     return out
 
 
-def build_index(now=None):
-    """重建 index.json。返回 dict。"""
+# ---- 月度归档（storage/archive/YYYY-MM.md） ---------------------------------
+# 规则：进入新月份后，把「上月及更早 + 全部任务已结束」的日文件合并进对应月份的归档文件，
+# 原日文件删除；仍有未完成任务的日文件保持不动。归档文件不参与日常索引，只做历史留档。
+_AUTO_ARCHIVED = False
+
+
+def _month_of(date):
+    """'YYYY-MM-DD' -> 'YYYY-MM'。"""
+    return date[:7]
+
+
+def _archive_path(month):
+    return os.path.join(ARCHIVE_DIR, month + ".md")
+
+
+def _write_archive_block(t):
+    """归档文件中的任务块：在 id 之后写入「原日期」，便于回溯它来自哪一天。"""
+    lines = _write_block(t).split("\n")
+    lines.insert(1, "原日期: %s" % (t.get("origin_date") or ""))
+    return "\n".join(lines)
+
+
+def _load_archive(month):
+    """读取月度归档文件，返回 {'month','source_files','tasks'}；不存在返回空。"""
+    fp = _archive_path(month)
+    out = {"month": month, "source_files": [], "tasks": []}
+    if not os.path.exists(fp):
+        return out
+    with open(fp, "r", encoding="utf-8") as f:
+        lines = f.read().splitlines()
+    i = 0
+    while i < len(lines):
+        line = lines[i].strip()
+        if line == "---":
+            i += 1
+            break
+        if line.startswith("来源文件:"):
+            out["source_files"] = [x.strip() for x in line[5:].split(";") if x.strip()]
+        i += 1
+    blocks, cur = [], []
+    for line in lines[i:]:
+        if not line.strip():
+            continue
+        if line.startswith("## "):
+            if cur:
+                blocks.append(cur)
+            cur = [line]
+        else:
+            cur.append(line)
+    if cur:
+        blocks.append(cur)
+    for blk in blocks:
+        tid = blk[0][3:].strip().split(" ")[0]
+        t = _parse_block(blk[1:])
+        t["id"] = tid or t["id"]
+        if t["id"]:
+            out["tasks"].append(t)
+    return out
+
+
+def _save_archive(month, source_files, tasks):
+    os.makedirs(ARCHIVE_DIR, exist_ok=True)
+    parts = ["# 归档 %s" % month,
+             "归档: true",
+             "schema: %d" % SCHEMA_VERSION,
+             "月份: %s" % month,
+             "来源文件: %s" % "; ".join(sorted(source_files)),
+             "---"]
+    for t in tasks:
+        parts.append("")
+        parts.append(_write_archive_block(t))
+    with open(_archive_path(month), "w", encoding="utf-8") as f:
+        f.write("\n".join(parts) + "\n")
+
+
+def _monthly_archives_info():
+    """列出已有月度归档文件的概要，供索引使用。"""
+    out = []
+    if not os.path.isdir(ARCHIVE_DIR):
+        return out
+    for fn in sorted(os.listdir(ARCHIVE_DIR)):
+        if not fn.endswith(".md"):
+            continue
+        month = fn[:-3]
+        if not re.match(r"^\d{4}-\d{2}$", month):
+            continue
+        data = _load_archive(month)
+        out.append({"month": month, "files": sorted(data["source_files"]),
+                    "file_count": len(data["source_files"]), "tasks": len(data["tasks"])})
+    return out
+
+
+def _monthly_archive(now=None, months=None, include_current=False, dry_run=False):
+    """把「可归档日文件」（全部任务已结束）按月份合并进归档文件。
+
+    months=None 时取全部早于当前月份的可归档月份（include_current=True 则含当前月）。
+    dry_run=True 只返回计划不落盘。返回 [{'month','files','tasks'}]。"""
     now = now or dt.datetime.now()
     files = _scan_files()
+    cur_month = _month_of(now.strftime("%Y-%m-%d"))
+    groups = {}
+    for date in sorted(files):
+        data = files[date]
+        if not data["tasks"]:
+            continue
+        if not all(t["status"] == "结束" for t in data["tasks"]):
+            continue
+        month = _month_of(date)
+        if months is not None:
+            if month not in months:
+                continue
+        elif not include_current and month >= cur_month:
+            continue
+        groups.setdefault(month, []).append(date)
+
+    plan = []
+    for month in sorted(groups):
+        dates = groups[month]
+        merged = []
+        for date in dates:
+            for t in files[date]["tasks"]:
+                item = dict(t)
+                item["origin_date"] = date
+                merged.append(item)
+        if dry_run:
+            plan.append({"month": month, "files": dates, "tasks": len(merged)})
+            continue
+        exist = _load_archive(month)
+        by_id = {t["id"]: t for t in exist["tasks"]}
+        for t in merged:
+            by_id[t["id"]] = t
+        all_tasks = [by_id[k] for k in sorted(by_id)]
+        sources = sorted(set(exist["source_files"]) | set(dates))
+        _save_archive(month, sources, all_tasks)
+        for date in dates:
+            try:
+                os.remove(_file_path(date))
+            except OSError:
+                pass
+        plan.append({"month": month, "files": dates, "tasks": len(merged)})
+    return plan
+
+
+def _auto_monthly_archive(now=None):
+    """进入新月份时自动归档；每个进程只执行一次，避免读命令反复写盘。"""
+    global _AUTO_ARCHIVED
+    if _AUTO_ARCHIVED:
+        return []
+    _AUTO_ARCHIVED = True
+    return _monthly_archive(now=now, dry_run=False)
+
+
+def build_index(now=None):
+    """重建 index.json。返回 dict。
+
+    索引里每个条目都带派生信息（逾期天数 / 置顶与理由 / 预案 / 周口径统计），
+    供 CLI 与网页共用同一套算法；缺失数据一律为 None，渲染层不得编造。"""
+    now = now or dt.datetime.now()
+    _auto_monthly_archive(now)  # 进入新月 → 自动归档上月可归档记录（每进程一次）
+    files = _scan_files()
     urgent, in_progress, todo_, done = [], [], [], []
+    today, overdue = [], []
     archived_files = []
     total = done_total = 0
     imp_rank = {"重要": 0, "不重要": 1}
+    week_start, week_end = _week_bounds(now.date())
+    week_created = week_done = 0
 
     def item_key(it):
-        # 紧急优先，然后重要性（高>中>低），再按创建时间倒序
-        return (0 if it["urgent"] else 1,
+        # 置顶（逾期 > 停滞 > 今天到期）→ 紧急 → 重要性 → 有截止 → 创建时间
+        pin = it.get("pin")
+        return (0 if pin is not None else 1,
+                pin if pin is not None else 99,
+                0 if it["urgent"] else 1,
                 imp_rank.get(it.get("importance"), 1),
                 _due_value(it.get("due")) is None,
                 -(now.timestamp() if it.get("created") else 0))
+
+    def in_this_week(stamp):
+        dv = _due_value(stamp)
+        if dv is None:
+            return False
+        return week_start <= dv.date() <= week_end
 
     for date, data in files.items():
         if data["archived"]:
             archived_files.append(date)
         for t in data["tasks"]:
             total += 1
+            pin, reason = _pin_info(t, now)
+            od = _overdue_days(t, now)
             item = {
                 "id": t["id"], "text": t["text"], "importance": t["importance"],
                 "status": t["status"], "due": t["due"], "file": date,
@@ -484,32 +806,57 @@ def build_index(now=None):
                 "parent": t.get("parent") or "",
                 "from": t.get("from"),
                 "tags": t.get("tags") or [],
+                # 预案（选填）：最容易拦住我的障碍 / 如果它出现，我就……
+                "blocker": t.get("blocker") or "", "counter": t.get("counter") or "",
+                # 派生指标：无数据为 None，渲染层显示「—」/「暂无推算」
+                "overdue_days": od, "due_in_days": _due_in_days(t, now),
+                "stall_days": _stall_days(t, now),
+                "projected_finish": _projected_finish(t, now),
+                "pin": pin, "pin_reason": reason or "",
             }
             if t["status"] == "结束":
                 done.append(item)
                 done_total += 1
+                if in_this_week(t.get("updated") or t.get("created")):
+                    week_done += 1
             elif t["status"] == "进行中":
                 in_progress.append(item)
             else:
                 todo_.append(item)
             if _is_urgent(t, now) and t["status"] != "结束":
                 urgent.append(item)
-    urgent.sort(key=item_key)
-    in_progress.sort(key=item_key)
-    todo_.sort(key=item_key)
-    done.sort(key=item_key)
+            if in_this_week(t.get("created")):
+                week_created += 1
+            if pin is not None and t["status"] != "结束":
+                today.append(item)
+            if od is not None:
+                overdue.append(item)
+    for bucket in (urgent, in_progress, todo_, done, today, overdue):
+        bucket.sort(key=item_key)
+    monthly = _monthly_archives_info()
     index = {
+        "schema_version": SCHEMA_VERSION,
         "generated": _fmt(now),
         "summary": {
             "todo": len(todo_), "in_progress": len(in_progress), "urgent": len(urgent),
             "done": len(done), "total": total, "archived_files": len(archived_files),
-            "files": len(files),
+            "files": len(files), "today": len(today), "overdue": len(overdue),
+            "week_created": week_created, "week_done": week_done,
+            "monthly_archives": len(monthly),
+            "archived_tasks": sum(m["tasks"] for m in monthly),
         },
+        # 周口径：一律周一为起点
+        "week": {"start": week_start.strftime("%Y-%m-%d"),
+                 "end": week_end.strftime("%Y-%m-%d"),
+                 "created": week_created, "done": week_done},
         "urgent": urgent,
+        "today": today,
+        "overdue": overdue,
         "in_progress": in_progress,
         "todo": todo_,
         "done": done,
         "archived_files": archived_files,
+        "monthly_archives": monthly,
     }
     with open(INDEX_PATH, "w", encoding="utf-8") as f:
         json.dump(index, f, ensure_ascii=False, indent=2)
@@ -594,22 +941,33 @@ def _apply_task_fields(task, args, now, *, is_new):
     if args.status is not None:
         task["status"] = args.status if args.status in STATUS_SET else DEFAULT_STATUS
     elif is_new:
-        task["status"] = DEFAULT_STATUS
+        task["status"] = _default_of("status")
 
     if args.importance is not None:
         task["importance"] = args.importance if args.importance in IMPORTANCE_SET else DEFAULT_IMPORTANCE
     elif is_new:
-        task["importance"] = DEFAULT_IMPORTANCE
+        task["importance"] = _default_of("importance")
 
     if args.urgent is not None:
         task["urgent"] = args.urgent if args.urgent in URGENT_SET else DEFAULT_URGENT
     elif is_new:
-        task["urgent"] = DEFAULT_URGENT
+        task["urgent"] = _default_of("urgent")
 
     if args.note is not None:
         task["note"] = _norm(args.note)
     elif is_new:
         task["note"] = ""
+
+    # 预案（选填）：最容易拦住我的障碍 / 如果它出现，我就……
+    if getattr(args, "blocker", None) is not None:
+        task["blocker"] = _norm(args.blocker)
+    elif is_new:
+        task["blocker"] = ""
+
+    if getattr(args, "counter", None) is not None:
+        task["counter"] = _norm(args.counter)
+    elif is_new:
+        task["counter"] = ""
 
     if args.workspace is not None:
         task["workspace"] = _norm_path(args.workspace)
@@ -642,7 +1000,12 @@ def _apply_task_fields(task, args, now, *, is_new):
         task["parent"] = ""
 
     if args.due is not None:
-        task["due"] = parse_due(args.due, now) if args.due else None
+        parsed = parse_due(args.due, now) if args.due else None
+        task["due"] = parsed
+        # 不推算原则：解析不了就说出来，不静默丢弃、更不猜一个日期
+        if args.due and not parsed:
+            print("警告：未识别时间「%s」，该任务未设截止（可写 明天 / 周五 / 2026-10-20 10:00）。"
+                  % args.due, file=sys.stderr)
     elif is_new:
         task["due"] = None
 
@@ -671,6 +1034,10 @@ def _print_task_summary(prefix, tid, date, task, idx):
         print("  截止: %s" % task["due"])
     if task.get("note"):
         print("  备注: %s" % task["note"])
+    if task.get("blocker"):
+        print("  障碍: %s" % task["blocker"])
+    if task.get("counter"):
+        print("  对策: %s" % task["counter"])
     if task.get("workspace"):
         print("  工作空间: %s" % task["workspace"])
     if task.get("docs"):
@@ -685,6 +1052,15 @@ def _print_task_summary(prefix, tid, date, task, idx):
         print("  父任务: %s" % task["parent"])
     if task.get("from") and task["from"].get("url"):
         print("  来源: %s | %s" % (task["from"].get("type"), task["from"].get("url")))
+    # 置顶必须解释原因；逾期任务必须给出两个出口
+    _n = dt.datetime.now()
+    pin, reason = _pin_info(task, _n)
+    if pin is not None:
+        print("  置顶: %s" % reason)
+    if _overdue_days(task, _n) is not None:
+        print("  出口: 立即推进 → start/done %s；调整计划 → postpone %s <新时间>" % (tid, tid))
+    if _projected_finish(task, _n) is None and task["status"] != "结束":
+        print("  预计完成日: 暂无推算（缺少进展记录）")
     print("  索引已更新：todo=%d in_progress=%d urgent=%d" % (
         idx["summary"]["todo"], idx["summary"]["in_progress"], idx["summary"]["urgent"]))
 
@@ -783,6 +1159,7 @@ def cmd_add(args, now=None):
         "text": text, "note": "", "workspace": "", "docs": [], "links": [],
         "depends_on": [], "due": None, "created": None, "updated": None,
         "urgent": DEFAULT_URGENT, "from": None, "parent": "", "tags": [],
+        "blocker": "", "counter": "", "origin_date": "",
     }
     _apply_task_fields(task, args, now, is_new=True)
     # 新任务的依赖校验：存在性 + 硬检查（新建即以 进行中/结束 起步时同样受依赖约束）
@@ -1151,6 +1528,100 @@ def cmd_archive(args):
     return 0
 
 
+def cmd_postpone(args):
+    """调整计划：重设（或清除）某任务的截止日。这是逾期任务的第二个出口。
+    时间交给 parse_due 解析，解析不了就报错并保持不变——绝不猜一个日期。"""
+    date, data, t = _find_task(args.id)
+    if t is None:
+        print("未找到任务 %s" % args.id, file=sys.stderr)
+        return 2
+    old = t.get("due")
+    if args.clear:
+        t["due"] = None
+    else:
+        now = dt.datetime.now()
+        nd = parse_due(args.due, now)
+        if nd is None:
+            print("错误：未识别时间「%s」，截止日未改动。" % args.due, file=sys.stderr)
+            print("可写：明天 / 周五 / 3天后 / 2026-10-20 10:00 / --clear 取消截止", file=sys.stderr)
+            return 2
+        t["due"] = nd
+    t["updated"] = _fmt(dt.datetime.now())
+    data["archived"] = all(x["status"] == "结束" for x in data["tasks"])
+    save_file(date, data["archived"], data["tasks"])
+    idx = build_index()
+    print("已调整计划：%s %s" % (t["id"], t["text"]))
+    print("  截止: %s -> %s" % (old or "无截止", t["due"] or "无截止"))
+    print("  索引已更新：todo=%d in_progress=%d urgent=%d overdue=%d" % (
+        idx["summary"]["todo"], idx["summary"]["in_progress"],
+        idx["summary"]["urgent"], idx["summary"]["overdue"]))
+    return 0
+
+
+def cmd_migrate(args):
+    """把旧版本存储文件迁移到当前 schema（默认只预览，--apply 才落盘）。
+    迁移是无损的：读出来再按当前格式写回，补齐 schema 头与新字段默认值。"""
+    files = _scan_files()
+    outdated = [d for d in sorted(files) if (files[d].get("schema") or 1) < SCHEMA_VERSION]
+    cur_idx_version = None
+    if os.path.exists(INDEX_PATH):
+        try:
+            with open(INDEX_PATH, "r", encoding="utf-8") as f:
+                cur_idx_version = json.load(f).get("schema_version")
+        except Exception:
+            cur_idx_version = None
+    if not outdated and cur_idx_version == SCHEMA_VERSION:
+        print("已是最新 schema v%d（%d 个存储文件），无需迁移。" % (SCHEMA_VERSION, len(files)))
+        return 0
+    print("当前 schema v%d，以下 %d 个文件需要迁移：" % (SCHEMA_VERSION, len(outdated)))
+    for d in outdated:
+        print("  %s.md  v%s -> v%d" % (d, files[d].get("schema") or 1, SCHEMA_VERSION))
+    if cur_idx_version != SCHEMA_VERSION:
+        print("  index.json  v%s -> v%d" % (cur_idx_version or "无", SCHEMA_VERSION))
+    if not args.apply:
+        print("（预览模式，未改动任何文件；确认后加 --apply）")
+        return 0
+    n = 0
+    for d in outdated:
+        data = files[d]
+        save_file(d, data["archived"], data["tasks"])
+        n += 1
+    idx = build_index()  # 顺带把 index.json 升到当前版本
+    print("已迁移 %d 个存储文件；index.json schema_version=%s" % (n, idx.get("schema_version")))
+    return 0
+
+
+def cmd_monthly_archive(args):
+    """月度归档：把「可归档日文件」（全部任务已结束）合并进 storage/archive/YYYY-MM.md。
+    默认口径：只处理早于当前月份的文件；--month 指定月份；--all 含当前月；--dry-run 只预览。"""
+    now = dt.datetime.now()
+    months = [args.month] if args.month else None
+    if args.month and not re.match(r"^\d{4}-\d{2}$", args.month):
+        print("错误：--month 需为 YYYY-MM", file=sys.stderr)
+        return 2
+    plan = _monthly_archive(now=now, months=months,
+                            include_current=bool(args.all), dry_run=bool(args.dry_run))
+    if not plan:
+        print("没有可归档的记录（需满足：日文件内全部任务已结束%s）。"
+              % ("" if args.all else "，且月份早于当前月"))
+        return 0
+    prefix = "将归档" if args.dry_run else "已归档"
+    total_files = sum(len(p["files"]) for p in plan)
+    total_tasks = sum(p["tasks"] for p in plan)
+    print("%s %d 个月份、%d 个日文件、%d 条记录：" % (prefix, len(plan), total_files, total_tasks))
+    for p in plan:
+        print("  - %s：%d 个文件（%s），%d 条 -> storage/archive/%s.md"
+              % (p["month"], len(p["files"]), "; ".join(p["files"]), p["tasks"], p["month"]))
+    if args.dry_run:
+        print("（预览模式，未改动；去掉 --dry-run 执行）")
+        return 0
+    idx = build_index(now)
+    print("月度归档文件：%d 个，归档记录 %d 条；当前待办索引 total=%d"
+          % (idx["summary"]["monthly_archives"], idx["summary"]["archived_tasks"],
+             idx["summary"]["total"]))
+    return 0
+
+
 def cmd_list(args, now=None):
     now = now or dt.datetime.now()
     if args.date:
@@ -1165,17 +1636,33 @@ def cmd_list(args, now=None):
         for t in data["tasks"]:
             if state == "urgent" and not _is_urgent(t, now):
                 continue
-            if state not in ("all", "urgent") and t["status"] != state:
+            if state == "overdue" and _overdue_days(t, now) is None:
                 continue
-            if state == "urgent":
-                pass
+            if state == "today" and _pin_info(t, now)[0] is None:
+                continue
+            if state not in ("all", "urgent", "overdue", "today") and t["status"] != state:
+                continue
             flag = STATUS_MARKS.get(t["status"], "[ ]")
             urgent_mark = "!" if _is_urgent(t, now) else " "
-            lines.append("%s %s %s [%s%s] %s · %s · %s"
+            # 置顶理由与逾期天数：有数据才显示，没有就是「—」
+            pin, reason = _pin_info(t, now)
+            od = _overdue_days(t, now)
+            tail = ""
+            if od is not None:
+                tail = " · 逾期 %d 天" % od
+            lines.append("%s %s %s [%s%s] %s · %s · %s%s"
                          % (t["id"], date, flag, urgent_mark, t["importance"], t["text"],
-                            t["due"] or "无截止", t["status"]))
+                            t["due"] or "无截止", t["status"], tail))
+            if reason:
+                lines.append("   置顶: %s" % reason)
+            if od is not None:
+                lines.append("   出口: 立即推进 start/done %s；调整计划 postpone %s <新时间>"
+                             % (t["id"], t["id"]))
             if t.get("note"):
                 lines.append("   备注: %s" % t["note"])
+            if t.get("blocker") or t.get("counter"):
+                lines.append("   预案: 障碍「%s」→ 对策「%s」"
+                             % (t.get("blocker") or "（未填）", t.get("counter") or "（未填）"))
             if t.get("parent"):
                 lines.append("   父任务: %s" % t["parent"])
             if t.get("depends_on"):
@@ -1196,11 +1683,20 @@ def cmd_list(args, now=None):
 
 def cmd_show(args):
     tid = args.id
+    if re.match(r"^\d{4}-\d{2}$", tid):
+        # 月度归档文件
+        data = _load_archive(tid)
+        print("# 归档 %s（来源文件: %s，共 %d 条）" % (
+            tid, "; ".join(data["source_files"]) or "无", len(data["tasks"])))
+        for t in data["tasks"]:
+            print(_write_block(t))
+            print("")
+        return 0
     if re.match(r"^\d{4}-\d{2}-\d{2}$", tid):
         date = tid
-        data = load_file(date)
-        print("# 待办 %s（归档: %s）" % (date, data["archived"]))
-        for t in data["tasks"]:
+        fdata = load_file(date)
+        print("# 待办 %s（归档: %s，schema: v%s）" % (date, fdata["archived"], fdata["schema"]))
+        for t in fdata["tasks"]:
             print(_write_block(t))
             print("")
         return 0
@@ -1208,8 +1704,21 @@ def cmd_show(args):
     if t is None:
         print("未找到任务 %s" % tid, file=sys.stderr)
         return 2
-    print("文件: %s（归档: %s）" % (date, data["archived"]))
+    now = dt.datetime.now()
+    print("文件: %s（归档: %s，schema: v%s）" % (date, data["archived"], data["schema"]))
     print(_write_block(t))
+    # 派生指标：算不出来的一律显示「—」/「暂无推算」，不编数字
+    od, dd, sd = _overdue_days(t, now), _due_in_days(t, now), _stall_days(t, now)
+    pf = _projected_finish(t, now)
+    print("")
+    print("逾期天数: %s | 距截止: %s | 停滞天数: %s"
+          % (_days_unknown(od), _days_unknown(dd), _days_unknown(sd)))
+    print("预计完成日: %s" % (pf or "暂无推算（缺少进展记录）"))
+    pin, reason = _pin_info(t, now)
+    if pin is not None:
+        print("置顶: %s" % reason)
+    if od is not None:
+        print("出口: 立即推进 → start/done %s；调整计划 → postpone %s <新时间>" % (tid, tid))
     return 0
 
 
@@ -1271,6 +1780,7 @@ def _reformat_workspace_lines(raw, style):
 def cmd_init(args):
     """识别当前工作环境并保存到 env.json，同时把已有工作空间统一为当前路径风格。"""
     env = _detect_env()
+    env["defaults"] = _defaults_view()   # 记录当前生效的默认值，便于用 env --set 覆盖
     _save_env(env)
     n = _reformat_all_workspaces(env["path_style"])
     print("已识别并保存工作环境 -> %s" % ENV_PATH)
@@ -1298,8 +1808,21 @@ def cmd_env(args):
                 print("错误：path_style 仅支持 %s" % " / ".join(_PATH_STYLES), file=sys.stderr)
                 return 2
             env["path_style"] = v
+        elif k.startswith("defaults."):
+            # 覆盖新增待办的默认值（只是预填，任何时候都能改）
+            dk = k[len("defaults."):]
+            if dk not in DEFAULT_KEYS:
+                print("错误：不支持的默认值键 %s（支持 %s）" % (k, " / ".join(
+                    "defaults." + x for x in DEFAULT_KEYS)), file=sys.stderr)
+                return 2
+            allowed = {"status": STATUS_SET, "importance": IMPORTANCE_SET, "urgent": URGENT_SET}[dk]
+            if v not in allowed:
+                print("错误：defaults.%s 仅支持 %s" % (dk, " / ".join(sorted(allowed))), file=sys.stderr)
+                return 2
+            env.setdefault("defaults", {})[dk] = v
         else:
-            print("错误：不支持的配置键 %s（当前仅支持 path_style）" % k, file=sys.stderr)
+            print("错误：不支持的配置键 %s（支持 path_style 与 defaults.status/importance/urgent）"
+                  % k, file=sys.stderr)
             return 2
     if args.reset or args.set:
         env["updated"] = _fmt(dt.datetime.now())
@@ -1309,6 +1832,9 @@ def cmd_env(args):
         reformat_n = _reformat_all_workspaces(env.get("path_style"))
     out = {k: v for k, v in env.items() if not k.startswith("_")}
     print(json.dumps(out, ensure_ascii=False, indent=2))
+    print("生效的默认值（新增待办时预填，可随时覆盖）：")
+    print(json.dumps(_defaults_view(), ensure_ascii=False))
+    print("周口径: 周一为起点（WEEK_START_ISO=%d）" % WEEK_START_ISO)
     if args.reformat_workspaces:
         if reformat_n:
             print("已将 %d 个存储文件中的工作空间统一为 %s 格式" % (reformat_n, env["path_style"]))
@@ -1330,6 +1856,8 @@ def main():
     pa.add_argument("--urgent", choices=["紧急", "不紧急"], default=None, help="紧急程度")
     pa.add_argument("--status", choices=["维护", "进行中", "结束", "待开始", "其他"], default=None)
     pa.add_argument("--note", default=None)
+    pa.add_argument("--blocker", default=None, help="最容易拦住我的障碍（选填，卡片上显示）")
+    pa.add_argument("--counter", default=None, help="对策：如果障碍出现，我就……（选填）")
     pa.add_argument("--workspace", default=None)
     pa.add_argument("--docs", default=None, help="相关文档，用 ; 分隔")
     pa.add_argument("--links", default=None, help="链接，用 ; 分隔")
@@ -1358,6 +1886,19 @@ def main():
     pw.add_argument("--force", action="store_true", help="忽略前置依赖未完成的硬检查，强制进行")
     pr = sub.add_parser("reopen", help="重新打开")
     pr.add_argument("id")
+    ppo = sub.add_parser("postpone", aliases=["reschedule", "replan"],
+                         help="调整计划：重设/清除截止日（逾期任务的第二个出口）")
+    ppo.add_argument("id")
+    ppo.add_argument("due", nargs="?", default="",
+                     help="新的时间，如 明天 / 下周一 / 3天后 / 2026-10-20 10:00")
+    ppo.add_argument("--clear", action="store_true", help="清除截止日")
+    pmi = sub.add_parser("migrate", help="把旧版本存储文件迁移到当前 schema（默认预览，--apply 执行）")
+    pmi.add_argument("--apply", action="store_true", help="真正执行迁移（默认只预览）")
+    pma = sub.add_parser("archive-month", aliases=["monthly-archive"],
+                         help="月度归档：把可归档日文件合并进 storage/archive/YYYY-MM.md")
+    pma.add_argument("--month", default="", help="指定月份 YYYY-MM；默认处理早于当前月的文件")
+    pma.add_argument("--all", action="store_true", help="含当前月份")
+    pma.add_argument("--dry-run", action="store_true", help="只预览不落盘")
     pdep = sub.add_parser("dep", help="设置 / 查看任务依赖（含存在性与环检测）")
     pdep.add_argument("id")
     pdep.add_argument("deps", nargs="*", help="设置（替换）依赖任务ID列表")
@@ -1372,15 +1913,18 @@ def main():
     par.add_argument("date")
     pl = sub.add_parser("list", help="列出任务")
     pl.add_argument("--date", default="")
-    pl.add_argument("--state", choices=["维护", "进行中", "结束", "待开始", "其他", "urgent", "all"], default="all")
-    psh = sub.add_parser("show", help="查看任务或某天文件")
+    pl.add_argument("--state", choices=["维护", "进行中", "结束", "待开始", "其他",
+                                        "urgent", "overdue", "today", "all"], default="all")
+    psh = sub.add_parser("show", help="查看任务 / 某天文件 / 月度归档（YYYY-MM）")
     psh.add_argument("id")
     pi = sub.add_parser("index", help="查看/重建索引")
     pi.add_argument("--rebuild", action="store_true")
 
     pinit = sub.add_parser("init", help="识别工作环境并保存到 env.json（含路径风格，统一工作空间）")
     penv = sub.add_parser("env", help="查看 / 修改已保存的环境配置")
-    penv.add_argument("--set", action="append", default=[], help="KEY=VALUE，可多次；当前支持 path_style=windows|posix|mixed")
+    penv.add_argument("--set", action="append", default=[],
+                      help="KEY=VALUE，可多次；支持 path_style=windows|posix|mixed 与 "
+                           "defaults.status|defaults.importance|defaults.urgent")
     penv.add_argument("--reset", action="store_true", help="重新探测环境并覆盖保存")
     penv.add_argument("--reformat-workspaces", action="store_true",
                       help="将全部存储文件中的工作空间统一为当前 path_style")
@@ -1396,6 +1940,12 @@ def main():
         "start": lambda a: cmd_start(a),
         "work": lambda a: cmd_work(a),
         "reopen": lambda a: cmd_reopen(a),
+        "postpone": lambda a: cmd_postpone(a),
+        "reschedule": lambda a: cmd_postpone(a),
+        "replan": lambda a: cmd_postpone(a),
+        "migrate": lambda a: cmd_migrate(a),
+        "archive-month": lambda a: cmd_monthly_archive(a),
+        "monthly-archive": lambda a: cmd_monthly_archive(a),
         "dep": lambda a: cmd_dep(a),
         "children": lambda a: cmd_children(a),
         "sub": lambda a: cmd_children(a),

@@ -14,7 +14,9 @@ awam-todo —— Web 前端后端服务。
 REST API：
   GET    /api/todos                       全部任务 + 索引摘要（可 ?state= / ?q= / ?tag= 过滤，含 revision 指纹）
   GET    /api/todos?state=进行中           按状态过滤（进行中/待开始/结束/维护/其他/urgent/all）
-  GET    /api/todos?q=关键词               按内容/备注/工作空间关键词过滤
+  GET    /api/todos?state=overdue          仅逾期任务（带 overdue_days）
+  GET    /api/todos?state=today            今日要处理（逾期 / 停滞 / 今天到期，带 pin_reason）
+  GET    /api/todos?q=关键词               按内容/备注/工作空间/预案关键词过滤
   GET    /api/todos?tag=标签               按标签过滤
   GET    /api/todos/<id>                  单条任务
   POST   /api/todos                       新增任务（重复检测命中时返回 409 + duplicates）
@@ -44,6 +46,11 @@ POST /api/todos 的冲突处理约定：
   前端可再携带 confirm 参数决定动作：
     {"force": true}                  -> 跳过重复检测，强制新建
     {"update_id": "T-...", ...}      -> 更新指定已有任务而非新建
+
+GET /api/todos 返回体补充（前端一律以这些字段渲染，不得自行编造）：
+  schema_version  存储格式版本；week 周口径（周一为起点）；defaults 可覆盖的默认值（表单预填）
+  每条 item 含 blocker/counter（预案）、overdue_days/due_in_days/stall_days/projected_finish
+  （算不出为 null）、pin/pin_reason（置顶与理由）。
 """
 
 import argparse
@@ -123,6 +130,9 @@ def _apply_fields(task, fields, now, is_new, deps_resolver=None):
         task["due"] = None
         task["from"] = None
         task["parent"] = ""
+        task["blocker"] = ""
+        task["counter"] = ""
+        task["origin_date"] = ""
         task["created"] = todo._fmt(now)
         task["updated"] = None
 
@@ -136,6 +146,10 @@ def _apply_fields(task, fields, now, is_new, deps_resolver=None):
         task["urgent"] = v if v in URGENTS else "不紧急"
     if "note" in fields:
         task["note"] = _norm(fields["note"])
+    if "blocker" in fields:
+        task["blocker"] = _norm(fields["blocker"])
+    if "counter" in fields:
+        task["counter"] = _norm(fields["counter"])
     if "workspace" in fields:
         task["workspace"] = todo._norm_path(fields["workspace"])
     if "docs" in fields:
@@ -178,7 +192,8 @@ def _apply_fields(task, fields, now, is_new, deps_resolver=None):
     return None
 
 def _task_view(date, t, now):
-    """把存储任务转成前端友好的展示对象。"""
+    """把存储任务转成前端友好的展示对象（含派生指标；算不出的为 None，前端显示「—」）。"""
+    pin, reason = todo._pin_info(t, now)
     return {
         "id": t.get("id"),
         "text": t.get("text"),
@@ -187,6 +202,9 @@ def _task_view(date, t, now):
         "urgent": t.get("urgent"),
         "is_urgent": bool(todo._is_urgent(t, now)),
         "note": t.get("note") or "",
+        # 预案（选填）
+        "blocker": t.get("blocker") or "",
+        "counter": t.get("counter") or "",
         "workspace": t.get("workspace") or "",
         "docs": t.get("docs") or [],
         "links": t.get("links") or [],
@@ -200,6 +218,13 @@ def _task_view(date, t, now):
         "date": date,
         "archived": bool(todo.load_file(date)["archived"]),
         "blocked": bool(todo._has_unfinished_deps(t)),
+        # 派生指标：None = 数据不足，前端须渲染「—」/「暂无推算」，不得编造
+        "overdue_days": todo._overdue_days(t, now),
+        "due_in_days": todo._due_in_days(t, now),
+        "stall_days": todo._stall_days(t, now),
+        "projected_finish": todo._projected_finish(t, now),
+        "pin": pin,
+        "pin_reason": reason or "",
     }
 
 
@@ -224,11 +249,13 @@ def _priority_rank(item):
 
 def _sort_items(items):
     """默认排序：
-    1) 按截止日期升序（最先截止的在最前）；无截止日期的不参与截止排序，统一排在带截止日期的之后；
+    0) 置顶组在前：逾期(0) > 停滞(1) > 今天到期(2)，无置顶理由的在后；
+    1) 按截止日期升序（最先截止的在最前）；无截止日期的统一排在带截止日期的之后；
     2) 其次按紧急重要程度降序（紧急+重要 > 紧急/重要 > 都不占）；
     3) 最后按创建时间升序作为稳定次序。
     """
     items.sort(key=lambda it: (
+        (0, it["pin"]) if it.get("pin") is not None else (1, 0),   # 置顶组在前
         0 if it.get("due") else 1,                      # 带截止日期的在前，无截止日期的在后
         todo._due_value(it.get("due")) or dt.datetime.min,  # 截止越早越靠前
         -_priority_rank(it),                            # 紧急重要程度降序
@@ -483,18 +510,27 @@ class Handler(BaseHTTPRequestHandler):
         if state and state != "all":
             if state == "urgent":
                 items = [i for i in items if i["is_urgent"] and i["status"] != "结束"]
+            elif state == "overdue":
+                items = [i for i in items if i.get("overdue_days") is not None]
+            elif state == "today":
+                items = [i for i in items if i.get("pin") is not None and i["status"] != "结束"]
             else:
                 items = [i for i in items if i["status"] == state]
         if keyword:
             items = [i for i in items if keyword in (i["text"] or "").lower()
                      or keyword in (i["note"] or "").lower()
-                     or keyword in (i["workspace"] or "").lower()]
+                     or keyword in (i["workspace"] or "").lower()
+                     or keyword in (i.get("blocker") or "").lower()
+                     or keyword in (i.get("counter") or "").lower()]
         if tag:
             items = [i for i in items if tag in (i.get("tags") or [])]
         _sort_items(items)
         index = todo.build_index()
         self._json(200, {
+            "schema_version": index.get("schema_version"),
             "summary": index["summary"],
+            "week": index.get("week"),            # 周口径：周一为起点
+            "defaults": todo._defaults_view(),    # 可覆盖的默认值（仅用于表单预填）
             "items": items,
             "revision": _revision(),
         })

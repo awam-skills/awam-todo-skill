@@ -5,6 +5,8 @@ storage/
 index.json
 # 环境信息：由 init 命令按本机探测生成（跨机器不同）
 env.json
+# 会话记忆：本机工作日志，不随技能分发
+.workbuddy/
 
 # Python
 __pycache__/

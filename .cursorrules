@@ -1,0 +1,37 @@
+# Git 提交信息（Source Control 自动生成）
+
+When Cursor auto-generates a Git commit message for this repository, follow ALL rules below.
+
+## Hard requirements
+
+1. MUST use Conventional Commits: `<type>[!][(scope)]: <subject>`（scope optional）
+2. MUST write the subject (and body if any) in Simplified Chinese (简体中文)
+3. NEVER write the commit subject entirely in English
+4. NEVER use vague subjects: `update`, `fix bug`, `wip`, `misc`, `临时提交`
+5. Keep ONE concise subject line (≤72 characters); do NOT end with `。` or `.`
+6. Subject = WHAT changed (祈使：修复/新增/调整); body = WHY (optional); blank line between subject and body; wrap body ~72 chars; no file-list dump
+7. One commit = one concern; do NOT list filenames in the subject
+8. Allowed types (lowercase): feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert
+9. Preferred scopes for this repo (lowercase, optional): `skills`, `scripts`, `web`, `doc`；文档用 `docs` / `docs(<模块>)`，勿用 `docs(doc)`；CI 用 type `ci`，勿用 `chore(ci)`
+10. Breaking change: use `type(scope)!: …` and/or a footer `BREAKING CHANGE: …` in Chinese
+11. Revert: `revert: <原提交简述>` with body `This reverts commit <hash>.`
+12. Footers when useful: `Refs: #123` / `Closes: #123` / `Fixes: #123`
+13. NEVER commit `storage/`, `index.json`, `env.json`（本机待办数据与环境变量，已被 `.gitignore` 排除）
+
+## Examples (copy the style, not the English)
+
+- feat(skills): 新增待办预案字段并在卡片展示
+- fix(scripts): 修复逾期天数在数据缺失时的计算
+- refactor(web): 收敛浮层定位逻辑以统一纵横锚点
+- docs(skills): 补充标签推测与不推算原则说明
+
+## Wrong vs right
+
+- ❌ `Refactor todo board for better layout.`
+- ✅ `refactor(web): 优化看板布局以适配三档响应式`
+- ❌ `fix: update sync bug`
+- ✅ `fix(scripts): 修复索引未写入今日桶的问题`
+- ❌ `chore(ci): update workflow`
+- ✅ `ci: 调整自测工作流触发策略`
+- ❌ `docs(doc): update readme`
+- ✅ `docs: 补充标签推测使用说明`

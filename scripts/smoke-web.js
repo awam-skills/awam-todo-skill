@@ -153,6 +153,9 @@ global.fetch = async (url, opts) => {
       summary: { today: 2, overdue: 1 },
       week: { start: "2026-10-05", end: "2026-10-11", created: 0, done: 1 },
       defaults: { status: "进行中", importance: "不重要", urgent: "不紧急" },
+      // 编辑器可用性由后端给；前端据此决定是否渲染「用编辑器打开」
+      editor: { configured: true, available: true, label: "Cursor", path: "C:\\...\\Cursor.exe", error: null },
+      storage_dir: "G:\\Projects\\19AI\\skills\\awam-todo\\storage",
       items: mockItems, revision: "abc",
     }),
   };
@@ -172,6 +175,7 @@ function check(name, cond, extra) {
 (async () => {
   try {
     eval(code + "\n;global.__render = render; global.__setState = function(s){ currentState = s; };" +
+      "\n;global.__store = store;" +
       "\n;global.__ws = { positionWsMenu: positionWsMenu, followWsMenuX: followWsMenuX," +
       " activeWsMenu: activeWsMenu, GAP: WS_GAP, OVERLAP: WS_OVERLAP, MARGIN: WS_MARGIN," +
       " computeWsTop: computeWsTop, computeWsLeft: computeWsLeft, wsMenuSize: wsMenuSize," +
@@ -456,13 +460,38 @@ function check(name, cond, extra) {
     JSON.stringify(clipCalls));
   const wsUrls = fetchCalls.filter((f) => String(f.url).indexOf("/api/workspace/") >= 0).map((f) => String(f.url));
   check("打开目录命中 /api/workspace/open", wsUrls.indexOf("/api/workspace/open") >= 0, JSON.stringify(wsUrls));
-  check("用 Cursor 打开命中 /api/workspace/cursor", wsUrls.indexOf("/api/workspace/cursor") >= 0, JSON.stringify(wsUrls));
+  check("用编辑器打开命中 /api/workspace/editor", wsUrls.indexOf("/api/workspace/editor") >= 0, JSON.stringify(wsUrls));
+  check("不再请求历史接口 /api/workspace/cursor", wsUrls.indexOf("/api/workspace/cursor") < 0, JSON.stringify(wsUrls));
   const openBody = JSON.parse((fetchCalls.find((f) => String(f.url).indexOf("/api/workspace/open") >= 0) || {}).opts
     ? (fetchCalls.find((f) => String(f.url).indexOf("/api/workspace/open") >= 0).opts.body || "{}") : "{}");
   check("打开目录带上了正确的 path", openBody.path === "G:\\Projects\\Stock\\tdx-linker", JSON.stringify(openBody));
 
   global.__setState("overdue"); global.__render();
   check("逾期视图只剩逾期项", (els["list"].innerHTML.match(/class="card/g) || []).length === 1);
+
+  // ---------- 编辑器可配置：可用性决定菜单项是否渲染 ----------
+  global.__setState("all"); global.__render();
+  let cardHtml = els["list"].innerHTML;
+  check("编辑器可用时渲染「用编辑器打开」", /data-ws-act="editor"/.test(cardHtml), cardHtml.slice(0, 120));
+  check("菜单项显示配置的编辑器名", /用Cursor打开/.test(cardHtml), cardHtml.slice(0, 120));
+  check("编辑器可用时不再渲染旧 cursor 动作", !/data-ws-act="cursor"/.test(cardHtml));
+
+  global.__store.editor = { configured: false, available: false, label: null, path: null,
+                            error: "未配置编辑器（env.json 缺少 editor.path）" };
+  global.__render();
+  cardHtml = els["list"].innerHTML;
+  check("编辑器不可用时不渲染「用编辑器打开」", !/data-ws-act="editor"/.test(cardHtml),
+    cardHtml.match(/data-ws-act="[a-z]+"/g));
+  check("编辑器不可用时仍保留复制路径与打开目录", /data-ws-act="copy"/.test(cardHtml) && /data-ws-act="open"/.test(cardHtml));
+
+  global.__store.editor = { configured: true, available: false, label: "Cursor", path: "D:\\gone\\Cursor.exe",
+                            error: "编辑器路径失效（文件不存在）" };
+  global.__render();
+  check("配置了但路径失效时同样不渲染该菜单项", !/data-ws-act="editor"/.test(els["list"].innerHTML));
+
+  // 复原，避免影响后续断言
+  global.__store.editor = { configured: true, available: true, label: "Cursor", path: "C:\\...\\Cursor.exe", error: null };
+  global.__render();
 
   console.log(failed ? "\n结果：存在失败项" : "\n结果：全部通过");
   process.exit(failed ? 1 : 0);

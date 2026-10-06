@@ -43,6 +43,25 @@ awam-todo —— 输入与管理 To-Do 的实现脚本。
   python todo.py show 2026-09                              # 查看月度归档文件
   python todo.py index --rebuild
 
+配置（存 env.json，用 `env` 命令查看 / 修改）：
+  python todo.py init                                      # 探测环境（含编辑器）并写入 env.json
+  python todo.py env                                       # 查看当前生效配置
+  python todo.py env --set storage_dir="D:/awam-todo-data"                 # 改存储目录（旧目录有数据时要求二选一）
+  python todo.py env --set storage_dir="D:/awam-todo-data" --migrate       # 连数据一起搬过去
+  python todo.py env --set storage_dir="D:/awam-todo-data" --no-migrate    # 只改配置，不搬
+  python todo.py env --set editor.path="D:/Apps/Cursor/Cursor.exe"         # 配置「用编辑器打开」用的编辑器
+  python todo.py env --set editor.label="Cursor" --set "editor.args=--new-window"
+  python todo.py env --reset                               # 重新探测（含编辑器）
+  python todo.py env --set path_style=windows              # 路径风格
+  python todo.py env --set defaults.status=待开始          # 新增待办的默认值
+
+两条可配置能力（技能需知晓，也是本脚本的对外契约）：
+  1. storage_dir —— 待办数据放哪里。默认 <技能目录>/storage；改配置后所有读写
+     （含 archive/ 月度归档、index.json 重建）都跟着走。搬数据必须显式选
+     --migrate/--no-migrate，见 cmd_env()。
+  2. editor —— 「用编辑器打开工作区」用哪个编辑器。未配置/路径失效时一律报错，
+     不按软件名猜路径、不静默回退系统默认程序。见 resolve_editor() / open_editor()。
+
 依赖链说明：
   - 通过 `dep`（或 `add --deps`）为任务标记前置依赖（任务 ID，用 ; 分隔）。
   - 依赖硬检查是死的：目标状态推进到「进行中/结束」时，若前置依赖未全部结束，
@@ -69,11 +88,14 @@ import datetime as dt
 import json
 import os
 import re
+import subprocess
 import sys
 from difflib import SequenceMatcher
 
 SKILL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-STORAGE_DIR = os.path.join(SKILL_DIR, "storage")
+# 默认存储目录（技能根目录下的 storage/）。实际生效目录以 env.json 的 dirs.storage_dir 为准，
+# 未配置时才回落到这里。见 _storage_dir()。
+DEFAULT_STORAGE_DIR = os.path.join(SKILL_DIR, "storage")
 INDEX_PATH = os.path.join(SKILL_DIR, "index.json")
 ENV_PATH = os.path.join(SKILL_DIR, "env.json")
 
@@ -99,8 +121,7 @@ WEEK_START_ISO = 1
 STALL_DAYS = 3
 # 预计完成日所需的最小样本数（进展记录）。当前无进展记录层，恒为「暂无推算」。
 PROJECTION_MIN_SAMPLES = 3
-# 月度归档目录：storage/archive/YYYY-MM.md
-ARCHIVE_DIR = os.path.join(STORAGE_DIR, "archive")
+# 月度归档目录：<storage_dir>/archive/YYYY-MM.md，随存储目录走。见 _archive_dir()。
 
 # 旧值 -> 新枚举 的迁移映射（兼容历史存储文件）
 _OLD_STATUS = {"open": "待开始", "in_progress": "进行中", "done": "结束"}
@@ -256,13 +277,31 @@ def _fmt(d):
 _PATH_STYLES = ("windows", "posix", "mixed")
 
 
+def _read_saved_env():
+    """读取磁盘上的 env.json；不存在或损坏返回 None（不做任何推断）。"""
+    if os.path.exists(ENV_PATH):
+        try:
+            with open(ENV_PATH, "r", encoding="utf-8") as f:
+                env = json.load(f)
+            if isinstance(env, dict):
+                return env
+        except Exception:
+            pass
+    return None
+
+
 def _detect_env():
-    """探测当前运行环境，返回环境信息 dict（不落盘）。"""
+    """探测当前运行环境，返回环境信息 dict（不落盘）。
+
+    存储目录与编辑器属于「用户配置」，探测不出来，改动 env.json 时原样保留：
+    重新 `init` 不会把用户改过的 dirs.storage_dir / editor 冲掉。"""
     import platform
     import socket
     is_windows = os.name == "nt"
     default_style = "windows" if is_windows else "posix"
-    return {
+    saved = _read_saved_env() or {}
+    dirs = saved.get("dirs") if isinstance(saved.get("dirs"), dict) else {}
+    env = {
         "generated": _fmt(dt.datetime.now()),
         "path_style": default_style,
         "platform": {
@@ -274,20 +313,19 @@ def _detect_env():
             "hostname": socket.gethostname() if hasattr(socket, "gethostname") else "",
             "cwd": os.getcwd(),
         },
-        "dirs": {"skill_dir": SKILL_DIR, "storage_dir": STORAGE_DIR},
+        "dirs": {"skill_dir": SKILL_DIR,
+                 "storage_dir": _norm(dirs.get("storage_dir")) or DEFAULT_STORAGE_DIR},
     }
+    if isinstance(saved.get("editor"), dict):
+        env["editor"] = dict(saved["editor"])
+    return env
 
 
 def _load_env():
     """读取已保存的环境配置；不存在时按当前 OS 推断（不落盘）。"""
-    if os.path.exists(ENV_PATH):
-        try:
-            with open(ENV_PATH, "r", encoding="utf-8") as f:
-                env = json.load(f)
-            if isinstance(env, dict) and env.get("path_style") in _PATH_STYLES:
-                return env
-        except Exception:
-            pass
+    env = _read_saved_env()
+    if env is not None and env.get("path_style") in _PATH_STYLES:
+        return env
     env = _detect_env()
     env["_inferred"] = True
     return env
@@ -297,6 +335,245 @@ def _save_env(env):
     os.makedirs(SKILL_DIR, exist_ok=True)
     with open(ENV_PATH, "w", encoding="utf-8") as f:
         json.dump(env, f, ensure_ascii=False, indent=2)
+
+
+def _script_cmd():
+    """给用户看的操作提示里用的命令前缀（形如 python "<绝对路径>/todo.py"）。"""
+    return 'python "%s"' % os.path.abspath(__file__)
+
+
+def _storage_dir():
+    """当前生效的存储目录：env.json 的 dirs.storage_dir；未配置时为技能根目录下 storage/。"""
+    d = _norm((_load_env().get("dirs") or {}).get("storage_dir"))
+    if not d:
+        return DEFAULT_STORAGE_DIR
+    return os.path.abspath(os.path.expanduser(d))
+
+
+def _archive_dir():
+    """生效存储目录下的月度归档目录。"""
+    return os.path.join(_storage_dir(), "archive")
+
+
+def _storage_file_stats(d):
+    """统计目录下的日文件数与任务块数，用于搬迁前后校验。"""
+    files = tasks = 0
+    if not os.path.isdir(d):
+        return 0, 0
+    for fn in sorted(os.listdir(d)):
+        if not re.match(r"^\d{4}-\d{2}-\d{2}\.md$", fn):
+            continue
+        files += 1
+        with open(os.path.join(d, fn), "r", encoding="utf-8") as f:
+            tasks += sum(1 for line in f if line.startswith("## T-"))
+    return files, tasks
+
+
+def _migrate_storage(old_dir, new_dir):
+    """把旧存储目录的日文件与 archive/ 搬到新目录。
+
+    先复制 -> 校验文件数与任务块数一致 -> 校验通过才删除旧文件；
+    任何一步不通过都中止并保留旧目录，绝不出现两边都没有的数据状态。
+    返回 (ok, msg)。
+    """
+    import shutil
+    if os.path.abspath(old_dir) == os.path.abspath(new_dir):
+        return True, "新旧目录相同，无需搬迁"
+    old_files, old_tasks = _storage_file_stats(old_dir)
+    if old_files == 0:
+        return True, "旧目录没有待办文件，无需搬迁"
+    os.makedirs(new_dir, exist_ok=True)
+    created = []          # 本次新建的目标文件，失败时只回删这些，绝不动目标目录原有内容
+    try:
+        for fn in sorted(os.listdir(old_dir)):
+            src = os.path.join(old_dir, fn)
+            if os.path.isdir(src):
+                if fn == "archive":
+                    shutil.copytree(src, os.path.join(new_dir, fn), dirs_exist_ok=True)
+                continue
+            if fn.endswith(".md"):
+                dst = os.path.join(new_dir, fn)
+                if not os.path.exists(dst):
+                    created.append(dst)
+                shutil.copy2(src, dst)
+    except Exception as e:  # noqa: BLE001
+        for p in created:
+            try:
+                os.remove(p)
+            except Exception:
+                pass
+        return False, "复制失败，已保留旧目录不动（并回删本次写入的 %d 个目标文件）：%s" % (len(created), e)
+    new_files, new_tasks = _storage_file_stats(new_dir)
+    if (new_files, new_tasks) != (old_files, old_tasks):
+        removed = 0
+        for p in created:
+            try:
+                os.remove(p)
+                removed += 1
+            except Exception:
+                pass
+        return False, ("校验不通过（旧 %d 文件/%d 条，新 %d 文件/%d 条），已保留旧目录不动"
+                       "（并回删本次写入的 %d 个目标文件）。若新目录本身已有待办文件，"
+                       "请先清空或换一个空目录"
+                       % (old_files, old_tasks, new_files, new_tasks, removed))
+    for fn in sorted(os.listdir(old_dir)):
+        src = os.path.join(old_dir, fn)
+        if os.path.isdir(src) or not fn.endswith(".md"):
+            continue
+        os.remove(src)
+    return True, "已搬迁 %d 个文件（%d 条待办）" % (new_files, new_tasks)
+
+
+# ---- 编辑器（env.json 的 editor 段） ---------------------------------------
+# 只认三项：path（可执行文件/命令）、args（固定前置参数）、label（显示名，可省）。
+# 解析原则：未配置或路径失效 -> 报错并停用相关入口，不按软件名猜路径、不静默回退。
+def _editor_config():
+    e = _load_env().get("editor")
+    return e if isinstance(e, dict) else {}
+
+
+def resolve_editor():
+    """解析出可用的编辑器命令，返回 (cmd, error)。
+
+    cmd 为可直接交给 subprocess.Popen 的列表（不含要打开的路径，调用方追加）；
+    不可用（未配置 / 文件不存在 / 命令不在 PATH）时 cmd 为 None，error 为中文原因。"""
+    e = _editor_config()
+    raw = _norm(e.get("path"))
+    if not raw:
+        return None, "未配置编辑器（env.json 缺少 editor.path）"
+    path = os.path.expanduser(raw)
+    seps = [s for s in (os.sep, os.altsep) if s]
+    if os.path.isabs(path) or any(s in path for s in seps):
+        if not os.path.isfile(path):
+            return None, "编辑器路径失效（文件不存在）：%s" % raw
+        cmd = [path]
+    else:
+        import shutil
+        found = shutil.which(path)
+        if not found:
+            return None, "编辑器命令未在 PATH 中找到：%s" % raw
+        cmd = [found]
+    args = e.get("args")
+    if isinstance(args, str):
+        args = [x.strip() for x in args.split(";") if x.strip()]
+    if not isinstance(args, list):
+        args = []
+    return cmd + [str(a) for a in args], None
+
+
+def _editor_args_text():
+    """把 editor.args 还原成 env --set 用的字符串（分号分隔）。"""
+    args = _editor_config().get("args")
+    if isinstance(args, str):
+        return args.strip()
+    if isinstance(args, list):
+        return ";".join(str(a) for a in args)
+    return ""
+
+
+def editor_status():
+    """给网页/索引用的编辑器可用性摘要。"""
+    cmd, err = resolve_editor()
+    label = _norm(_editor_config().get("label"))
+    return {"configured": bool(_norm(_editor_config().get("path"))),
+            "available": cmd is not None,
+            "path": _norm(_editor_config().get("path")) or None,
+            "label": label or None,
+            "error": err}
+
+
+def _launch_argv(cmd, target):
+    """把编辑器命令 + 目标目录组装成可直接交给 Popen 的参数列表。
+
+    Windows 上 .cmd / .bat 不是可执行映像，CreateProcess 无法直接启动，必须经 cmd.exe
+    （Cursor 探测到的就往往是 cursor.CMD），否则报「不是有效的应用程序」。
+
+    经 cmd.exe 的写法有两种坑，都已实测排除：
+    - shell=True + 列表：cmd 会把 "/c" 当成脚本的第一个参数传进去（参数整体串位）。
+    - 手工拼命令行字符串：路径里的空格 / 引号需要自己的转义规则，容易切碎参数。
+    所以用 [comspec, "/c", 脚本, 参数...] 的列表形式，参数引用交给 subprocess 处理。"""
+    argv = list(cmd) + [target]
+    if os.name == "nt" and argv[0].lower().endswith((".cmd", ".bat")):
+        comspec = os.environ.get("ComSpec") or "cmd.exe"
+        return [comspec, "/c"] + argv
+    return argv
+
+
+def open_editor(target):
+    """用配置好的编辑器打开目录（不等待退出）。返回 (ok, msg)。
+
+    两点实现约束：
+    1. 编辑器是 GUI 程序：启动时切断 stdio 并脱离进程组，避免它占住调用方的管道
+       （否则 AI 调用 / 自测会一直等到编辑器退出）。
+    2. 启动方式见 _launch_argv()：Windows 的 .cmd / .bat 必须经 cmd.exe。"""
+    cmd, err = resolve_editor()
+    if cmd is None:
+        return False, err
+    kwargs = {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL,
+              "stderr": subprocess.DEVNULL, "close_fds": True}
+    if os.name == "nt":
+        kwargs["creationflags"] = (getattr(subprocess, "DETACHED_PROCESS", 0)
+                                  | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
+    try:
+        subprocess.Popen(_launch_argv(cmd, target), **kwargs)
+    except Exception as e:  # noqa: BLE001
+        return False, "启动编辑器失败：%s" % e
+    return True, "已用编辑器打开"
+
+
+# 常见编辑器探测表（按优先级从上到下，命中第一个即采用）。
+# 想换成别的编辑器：直接在这张表里加一行，或用 `env --set editor.path=...` 显式指定。
+# 探测不到时不写 editor 配置——不按名字猜路径，由用户显式配置。
+EDITOR_CANDIDATES = (
+    {"label": "Cursor", "cmd": "cursor", "paths": (
+        r"%LOCALAPPDATA%\Programs\cursor\Cursor.exe",
+        r"C:\Program Files\cursor\Cursor.exe",
+        "/Applications/Cursor.app/Contents/MacOS/Cursor",
+        "/usr/bin/cursor",
+    )},
+    {"label": "VS Code", "cmd": "code", "paths": (
+        r"%LOCALAPPDATA%\Programs\Microsoft VS Code\Code.exe",
+        r"C:\Program Files\Microsoft VS Code\Code.exe",
+        "/Applications/Visual Studio Code.app/Contents/MacOS/Electron",
+        "/usr/bin/code",
+    )},
+    {"label": "Trae", "cmd": "trae", "paths": (
+        r"%LOCALAPPDATA%\Programs\Trae\Trae.exe",
+        r"C:\Program Files\Trae\Trae.exe",
+        "/Applications/Trae.app/Contents/MacOS/Trae",
+    )},
+    {"label": "Windsurf", "cmd": "windsurf", "paths": (
+        r"%LOCALAPPDATA%\Programs\Windsurf\Windsurf.exe",
+        r"C:\Program Files\Windsurf\Windsurf.exe",
+        "/Applications/Windsurf.app/Contents/MacOS/Windsurf",
+    )},
+    {"label": "Sublime Text", "cmd": "subl", "paths": (
+        r"C:\Program Files\Sublime Text\sublime_text.exe",
+        "/Applications/Sublime Text.app/Contents/SharedSupport/bin/subl",
+    )},
+    {"label": "Zed", "cmd": "zed", "paths": (
+        r"%LOCALAPPDATA%\Programs\Zed\Zed.exe",
+        "/Applications/Zed.app/Contents/MacOS/zed",
+        "/usr/bin/zed",
+    )},
+)
+
+
+def _detect_editor():
+    """探测本机可用的编辑器，返回 {"label","path","args"} 或 None（探测不到）。
+
+    只做存在性判断，不启动任何进程。path 记实际命中的可执行文件，
+    保证换机器/换版本后仍能用 env --set editor.path 覆盖。"""
+    import shutil
+    for cand in EDITOR_CANDIDATES:
+        found = shutil.which(cand["cmd"])
+        if found:
+            return {"label": cand["label"], "path": found, "args": ""}
+        for p in cand["paths"]:
+            exp = os.path.expandvars(os.path.expanduser(p))
+            if os.path.isfile(exp):
+                return {"label": cand["label"], "path": exp, "args": ""}
+    return None
 
 
 def _get_path_style():
@@ -344,7 +621,7 @@ def _defaults_view():
 # ---- 存储文件读写 ---------------------------------------------------------
 def _file_path(date):
     """date 为 'YYYY-MM-DD'。返回存储文件绝对路径。"""
-    return os.path.join(STORAGE_DIR, date + ".md")
+    return os.path.join(_storage_dir(), date + ".md")
 
 
 def _parse_from(v):
@@ -501,7 +778,7 @@ def _write_block(t):
 def save_file(date, archived, tasks):
     """写回存储文件，保持 header（含 schema 版本）+ 任务块。"""
     fp = _file_path(date)
-    os.makedirs(STORAGE_DIR, exist_ok=True)
+    os.makedirs(_storage_dir(), exist_ok=True)
     parts = ["# 待办 %s" % date,
              "归档: %s" % ("true" if archived else "false"),
              "schema: %d" % SCHEMA_VERSION,
@@ -624,10 +901,10 @@ def _week_bounds(d):
 def _scan_files():
     """返回 {date: {'archived':bool,'schema':int,'tasks':[...]}}，按日期升序。
     仅扫描 storage/YYYY-MM-DD.md（月度归档在 storage/archive/ 下，不参与日常索引）。"""
-    if not os.path.isdir(STORAGE_DIR):
+    if not os.path.isdir(_storage_dir()):
         return {}
     out = {}
-    for fn in sorted(os.listdir(STORAGE_DIR)):
+    for fn in sorted(os.listdir(_storage_dir())):
         if not fn.endswith(".md"):
             continue
         date = fn[:-3]
@@ -651,7 +928,7 @@ def _month_of(date):
 
 
 def _archive_path(month):
-    return os.path.join(ARCHIVE_DIR, month + ".md")
+    return os.path.join(_archive_dir(), month + ".md")
 
 
 def _write_archive_block(t):
@@ -700,7 +977,7 @@ def _load_archive(month):
 
 
 def _save_archive(month, source_files, tasks):
-    os.makedirs(ARCHIVE_DIR, exist_ok=True)
+    os.makedirs(_archive_dir(), exist_ok=True)
     parts = ["# 归档 %s" % month,
              "归档: true",
              "schema: %d" % SCHEMA_VERSION,
@@ -717,9 +994,9 @@ def _save_archive(month, source_files, tasks):
 def _monthly_archives_info():
     """列出已有月度归档文件的概要，供索引使用。"""
     out = []
-    if not os.path.isdir(ARCHIVE_DIR):
+    if not os.path.isdir(_archive_dir()):
         return out
-    for fn in sorted(os.listdir(ARCHIVE_DIR)):
+    for fn in sorted(os.listdir(_archive_dir())):
         if not fn.endswith(".md"):
             continue
         month = fn[:-3]
@@ -1664,25 +1941,8 @@ def _set_status(tid, status, force=False):
     return 0
 
 
-def _find_cursor():
-    """定位 Cursor 可执行文件，返回命令列表（可加路径参数）。"""
-    import shutil
-    cli = shutil.which("cursor")
-    if cli:
-        return [cli]
-    cands = [
-        os.path.expandvars(r"%LOCALAPPDATA%\Programs\cursor\Cursor.exe"),
-        r"C:\Program Files\cursor\Cursor.exe",
-        r"C:\Program Files\cursor\resources\app\bin\cursor.cmd",
-    ]
-    for c in cands:
-        if os.path.exists(c):
-            return [c]
-    return []
-
-
 def cmd_work(args):
-    """继续一个待办：标记进行中，若有工作区目录则用 Cursor 打开。"""
+    """继续一个待办：标记进行中，若有工作区目录则用配置好的编辑器打开。"""
     date, data, t = _find_task(args.id)
     if t is None:
         print("未找到任务 %s" % args.id, file=sys.stderr)
@@ -1699,19 +1959,18 @@ def cmd_work(args):
     print("已标记进行中：%s %s" % (args.id, t["text"]))
     ws = _norm(t.get("workspace"))
     if ws:
-        cmd = _find_cursor()
-        if cmd:
-            import subprocess
-            try:
-                subprocess.Popen(cmd + [ws])
-                print("已用 Cursor 打开工作区：%s" % ws)
-            except Exception as e:
-                print("用 Cursor 打开工作区失败：%s" % e, file=sys.stderr)
-                print("工作区目录：%s" % ws)
+        label = _norm(_editor_config().get("label")) or "编辑器"
+        ok, msg = open_editor(ws)
+        if ok:
+            print("已用 %s 打开工作区：%s" % (label, ws))
         else:
-            print("未找到 Cursor，工作区目录：%s" % ws)
+            # work 的主职责（标记进行中）已经完成，这里只报错 + 给配置出口，不改返回码
+            print("打开编辑器失败：%s" % msg, file=sys.stderr)
+            print("工作区目录：%s" % ws, file=sys.stderr)
+            print("配置编辑器：%s env --set editor.path=\"<编辑器可执行文件绝对路径>\""
+                  % _script_cmd(), file=sys.stderr)
     else:
-        print("该待办未设置工作区目录，未打开 Cursor。")
+        print("该待办未设置工作区目录，未打开编辑器。")
     return 0
 
 
@@ -1960,10 +2219,10 @@ def _reformat_all_workspaces(style):
     以确保落盘内容真正统一为指定风格，而不仅是读取时归一化。"""
     if style not in ("windows", "posix"):
         return 0
-    if not os.path.isdir(STORAGE_DIR):
+    if not os.path.isdir(_storage_dir()):
         return 0
     changed = 0
-    for fn in sorted(os.listdir(STORAGE_DIR)):
+    for fn in sorted(os.listdir(_storage_dir())):
         if not fn.endswith(".md"):
             continue
         date = fn[:-3]
@@ -1971,7 +2230,7 @@ def _reformat_all_workspaces(style):
             dt.datetime.strptime(date, "%Y-%m-%d")
         except ValueError:
             continue
-        fp = os.path.join(STORAGE_DIR, fn)
+        fp = os.path.join(_storage_dir(), fn)
         with open(fp, "r", encoding="utf-8") as f:
             raw = f.read()
         new_raw = _reformat_workspace_lines(raw, style)
@@ -1996,9 +2255,16 @@ def _reformat_workspace_lines(raw, style):
 
 
 def cmd_init(args):
-    """识别当前工作环境并保存到 env.json，同时把已有工作空间统一为当前路径风格。"""
+    """识别当前工作环境并保存到 env.json，同时把已有工作空间统一为当前路径风格。
+
+    存储目录与编辑器属于用户配置：已保存的不会被覆盖；编辑器未配置时自动探测一次。
+    """
     env = _detect_env()
     env["defaults"] = _defaults_view()   # 记录当前生效的默认值，便于用 env --set 覆盖
+    if not isinstance(env.get("editor"), dict) or not _norm(env["editor"].get("path")):
+        detected = _detect_editor()
+        if detected:
+            env["editor"] = detected
     _save_env(env)
     n = _reformat_all_workspaces(env["path_style"])
     print("已识别并保存工作环境 -> %s" % ENV_PATH)
@@ -2007,14 +2273,72 @@ def cmd_init(args):
         print("已将 %d 个存储文件中的工作空间统一为 %s 格式" % (n, env["path_style"]))
     else:
         print("工作空间已统一为 %s 格式" % env["path_style"])
+    print("生效的存储目录：%s" % _storage_dir())
+    st = editor_status()
+    if st["available"]:
+        print("已探测到编辑器：%s（%s）" % (st["label"] or "已配置", st["path"]))
+    else:
+        print("未探测到可用编辑器（%s）；需要「用编辑器打开工作区」时请配置：" % st["error"])
+        print("  %s env --set editor.path=\"<编辑器可执行文件绝对路径>\"" % _script_cmd())
     return 0
 
 
+def _resolve_storage_setting(v):
+    """把用户给的存储目录配置解析成绝对路径并校验可写。返回 (abs_path, error)。"""
+    if not v:
+        return None, "storage_dir 不能为空"
+    p = os.path.abspath(os.path.expanduser(os.path.expandvars(v)))
+    try:
+        os.makedirs(p, exist_ok=True)
+    except Exception as e:  # noqa: BLE001
+        return None, "无法创建存储目录 %s：%s" % (p, e)
+    if not os.access(p, os.W_OK):
+        return None, "存储目录不可写：%s" % p
+    return p, None
+
+
+def _resolve_editor_path(v):
+    """校验编辑器 path：含分隔符按文件路径校验存在；否则按命令名校验在 PATH 中。"""
+    if not v:
+        return "editor.path 不能为空"
+    p = os.path.expanduser(os.path.expandvars(v))
+    seps = [s for s in (os.sep, os.altsep) if s]
+    if os.path.isabs(p) or any(s in p for s in seps):
+        if not os.path.isfile(p):
+            return "编辑器文件不存在：%s" % p
+        return None
+    import shutil
+    if not shutil.which(p):
+        return "命令 %s 不在 PATH 中（可改填编辑器可执行文件的绝对路径）" % p
+    return None
+
+
 def cmd_env(args):
-    """查看 / 修改已保存的环境配置。--set KEY=VALUE 可多次；--reset 重新探测。"""
+    """查看 / 修改已保存的环境配置。
+
+    --set KEY=VALUE 可多次，支持：
+      path_style=windows|posix|mixed
+      storage_dir=<目录>              （默认只改配置；旧目录有数据时加 --migrate 才搬迁）
+      editor.path=<可执行文件|命令名>
+      editor.label=<显示名>           （别名 editor.name）
+      editor.args=<固定前置参数，分号分隔>
+      defaults.status / defaults.importance / defaults.urgent
+    --reset 重新探测环境（含编辑器）；--reformat-workspaces 统一工作空间分隔符。
+    """
+    old_storage = _storage_dir()
     env = _load_env()
     if args.reset:
+        saved = _read_saved_env() or {}
         env = _detect_env()
+        # 用户配置不会被探测冲掉：存储目录与编辑器由 _detect_env 保留，默认值单独保留
+        if isinstance(saved.get("defaults"), dict):
+            env["defaults"] = dict(saved["defaults"])
+        detected = _detect_editor()
+        if detected:
+            env["editor"] = detected
+        else:
+            env.pop("editor", None)
+    new_storage = None
     for kv in args.set or []:
         if "=" not in kv:
             print("错误：--set 需为 KEY=VALUE 形式，例如 path_style=windows", file=sys.stderr)
@@ -2026,6 +2350,29 @@ def cmd_env(args):
                 print("错误：path_style 仅支持 %s" % " / ".join(_PATH_STYLES), file=sys.stderr)
                 return 2
             env["path_style"] = v
+        elif k == "storage_dir":
+            abs_p, err = _resolve_storage_setting(v)
+            if err:
+                print("错误：%s" % err, file=sys.stderr)
+                return 2
+            env.setdefault("dirs", {})["storage_dir"] = abs_p
+            new_storage = abs_p
+        elif k.startswith("editor."):
+            ek = k[len("editor."):]
+            if ek in ("label", "name"):
+                env.setdefault("editor", {})["label"] = v
+            elif ek == "path":
+                err = _resolve_editor_path(v)
+                if err:
+                    print("错误：%s" % err, file=sys.stderr)
+                    return 2
+                env.setdefault("editor", {})["path"] = v
+            elif ek == "args":
+                env.setdefault("editor", {})["args"] = v
+            else:
+                print("错误：不支持的编辑器配置键 %s（支持 editor.path / editor.label / editor.args）"
+                      % k, file=sys.stderr)
+                return 2
         elif k.startswith("defaults."):
             # 覆盖新增待办的默认值（只是预填，任何时候都能改）
             dk = k[len("defaults."):]
@@ -2039,12 +2386,43 @@ def cmd_env(args):
                 return 2
             env.setdefault("defaults", {})[dk] = v
         else:
-            print("错误：不支持的配置键 %s（支持 path_style 与 defaults.status/importance/urgent）"
-                  % k, file=sys.stderr)
+            print("错误：不支持的配置键 %s（支持 path_style / storage_dir / editor.path / "
+                  "editor.label / editor.args / defaults.*）" % k, file=sys.stderr)
+            return 2
+    # 存储目录变更：旧目录还有待办时必须让用户显式二选一，不能悄悄改配置把数据落下
+    storage_changed = bool(new_storage) and os.path.abspath(new_storage) != os.path.abspath(old_storage)
+    old_files = old_tasks = 0
+    if storage_changed:
+        old_files, old_tasks = _storage_file_stats(old_storage)
+        if old_files and not (args.migrate or args.no_migrate):
+            print("错误：旧存储目录仍有 %d 个文件（%d 条待办）：%s"
+                  % (old_files, old_tasks, old_storage), file=sys.stderr)
+            print("请明确选一个（配置尚未改动）：", file=sys.stderr)
+            print("  连数据一起搬：%s env --set storage_dir=\"%s\" --migrate"
+                  % (_script_cmd(), new_storage), file=sys.stderr)
+            print("  只改配置不搬：%s env --set storage_dir=\"%s\" --no-migrate"
+                  % (_script_cmd(), new_storage), file=sys.stderr)
             return 2
     if args.reset or args.set:
         env["updated"] = _fmt(dt.datetime.now())
         _save_env(env)
+    if storage_changed and old_files:
+        if args.migrate:
+            ok, msg = _migrate_storage(old_storage, new_storage)
+            if ok:
+                print("搬迁完成：%s" % msg)
+                build_index()
+            else:
+                # 搬迁失败就把配置回滚，绝不留下「指向空目录」的假状态
+                env.setdefault("dirs", {})["storage_dir"] = old_storage
+                env["updated"] = _fmt(dt.datetime.now())
+                _save_env(env)
+                print("搬迁未完成：%s" % msg, file=sys.stderr)
+                print("配置已回滚到原目录：%s" % old_storage, file=sys.stderr)
+                return 1
+        else:
+            print("已改配置，未搬迁；旧目录仍有 %d 个文件（%d 条待办）：%s"
+                  % (old_files, old_tasks, old_storage))
     reformat_n = 0
     if args.reformat_workspaces:
         reformat_n = _reformat_all_workspaces(env.get("path_style"))
@@ -2053,6 +2431,13 @@ def cmd_env(args):
     print("生效的默认值（新增待办时预填，可随时覆盖）：")
     print(json.dumps(_defaults_view(), ensure_ascii=False))
     print("周口径: 周一为起点（WEEK_START_ISO=%d）" % WEEK_START_ISO)
+    print("生效的存储目录：%s" % _storage_dir())
+    st = editor_status()
+    if st["available"]:
+        print("生效的编辑器：%s（%s）" % (st["label"] or "已配置", st["path"]))
+    else:
+        print("生效的编辑器：未配置或不可用（%s）" % st["error"])
+        print("  配置：%s env --set editor.path=\"<编辑器可执行文件绝对路径>\"" % _script_cmd())
     if args.reformat_workspaces:
         if reformat_n:
             print("已将 %d 个存储文件中的工作空间统一为 %s 格式" % (reformat_n, env["path_style"]))
@@ -2104,7 +2489,8 @@ def main():
     ps = sub.add_parser("start", help="标记进行中（前置依赖未结束需确认）")
     ps.add_argument("id")
     ps.add_argument("--force", action="store_true", help="忽略前置依赖未完成的硬检查，强制进行")
-    pw = sub.add_parser("work", aliases=["continue"], help="继续待办：标记进行中并用 Cursor 打开工作区（前置依赖未结束需确认）")
+    pw = sub.add_parser("work", aliases=["continue"],
+                        help="继续待办：标记进行中并用配置好的编辑器打开工作区（前置依赖未结束需确认）")
     pw.add_argument("id")
     pw.add_argument("--force", action="store_true", help="忽略前置依赖未完成的硬检查，强制进行")
     pr = sub.add_parser("reopen", help="重新打开")
@@ -2143,12 +2529,17 @@ def main():
     pi = sub.add_parser("index", help="查看/重建索引")
     pi.add_argument("--rebuild", action="store_true")
 
-    pinit = sub.add_parser("init", help="识别工作环境并保存到 env.json（含路径风格，统一工作空间）")
-    penv = sub.add_parser("env", help="查看 / 修改已保存的环境配置")
+    pinit = sub.add_parser("init", help="识别工作环境并保存到 env.json（路径风格 / 存储目录 / 编辑器，统一工作空间）")
+    penv = sub.add_parser("env", help="查看 / 修改已保存的环境配置（路径风格 / 存储目录 / 编辑器 / 默认值）")
     penv.add_argument("--set", action="append", default=[],
-                      help="KEY=VALUE，可多次；支持 path_style=windows|posix|mixed 与 "
+                      help="KEY=VALUE，可多次；支持 path_style=windows|posix|mixed、"
+                           "storage_dir=<目录>、editor.path / editor.label / editor.args、"
                            "defaults.status|defaults.importance|defaults.urgent")
-    penv.add_argument("--reset", action="store_true", help="重新探测环境并覆盖保存")
+    penv.add_argument("--migrate", action="store_true",
+                      help="与 --set storage_dir 同用：把旧存储目录的待办搬到新目录（先复制，校验一致后才删旧）")
+    penv.add_argument("--no-migrate", action="store_true",
+                      help="与 --set storage_dir 同用：只改配置，明确不搬迁、也不再提示")
+    penv.add_argument("--reset", action="store_true", help="重新探测环境并覆盖保存（含编辑器）")
     penv.add_argument("--reformat-workspaces", action="store_true",
                       help="将全部存储文件中的工作空间统一为当前 path_style")
 

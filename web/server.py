@@ -24,6 +24,11 @@ REST API：
   PATCH  /api/todos/<id>/status           仅改状态（冲突返回 409 + conflicts）
   DELETE /api/todos/<id>                  删除任务（同时清理其他任务对它的引用）
   POST   /api/todos/apply-patches         批量应用 patch 并一次性落盘（网页端延迟保存入口）
+  POST   /api/workspace/open              用系统文件管理器打开目录
+  POST   /api/workspace/editor            用 env.json 配置的编辑器打开目录
+                                          （/api/workspace/cursor 为历史别名，指向同一实现）
+                                          编辑器未配置或路径失效时返回 400 + message；
+                                          GET /api/todos 的 editor.available 决定前端是否渲染该入口
 
 POST /api/todos/apply-patches 约定：
   body: {"revision": <GET /api/todos 返回的指纹>, "patches": [
@@ -59,7 +64,6 @@ import hashlib
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
 import threading
@@ -364,43 +368,28 @@ def _open_dir(path):
     return True, "已打开目录"
 
 
-def _find_cursor_cli():
-    """定位 Cursor 命令行入口。返回命令列表或 None。"""
-    cand = shutil.which("cursor")
-    if cand:
-        return [cand]
-    # Windows 常见安装位置
-    if sys.platform.startswith("win"):
-        local = os.environ.get("LOCALAPPDATA", "")
-        for base in (os.path.join(local, "Programs", "cursor"),
-                     os.path.join(local, "Programs", "Cursor")):
-            if os.path.isdir(base):
-                cli = os.path.join(base, "resources", "app", "bin", "cursor.cmd")
-                if os.path.isfile(cli):
-                    return [cli]
-                cli = os.path.join(base, "cursor.exe")
-                if os.path.isfile(cli):
-                    return [cli]
-    return None
+def _open_editor(path):
+    """用 env.json 里配置的编辑器打开目录。返回 (ok, msg)。
 
-
-def _open_cursor(path):
-    """用 Cursor 打开目录。返回 (ok, msg)。"""
+    编辑器配置的唯一来源是 todo.py 的 editor 段（`env --set editor.path=...`）；
+    未配置或路径失效时明确报错，不回退到系统默认程序。
+    """
     p = _resolve_workspace(path)
     if p is None:
         return False, "路径无效或目录不存在"
-    cli = _find_cursor_cli()
-    if cli is None:
-        return False, "未找到 Cursor 命令行，请在系统 PATH 中配置 cursor 命令"
+    cmd, err = todo.resolve_editor()
+    if cmd is None:
+        return False, "%s；请用 `env --set editor.path=\"<编辑器可执行文件绝对路径>\"` 配置" % err
     try:
         if sys.platform.startswith("win"):
-            subprocess.Popen(cli + [p], shell=(cli[0].lower().endswith(".cmd")),
+            subprocess.Popen(cmd + [p],
                              creationflags=getattr(subprocess, "DETACHED_PROCESS", 0) | 0x08000000)
         else:
-            subprocess.Popen(cli + [p])
+            subprocess.Popen(cmd + [p])
     except Exception as e:  # noqa: BLE001
-        return False, "启动 Cursor 失败：%s" % e
-    return True, "已用 Cursor 打开"
+        return False, "启动编辑器失败：%s" % e
+    label = (todo.editor_status().get("label") or "编辑器")
+    return True, "已用 %s 打开" % label
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -475,8 +464,9 @@ class Handler(BaseHTTPRequestHandler):
             self._api_apply_patches(self._read_body())
         elif path == "/api/workspace/open":
             self._api_workspace_open(self._read_body())
-        elif path == "/api/workspace/cursor":
-            self._api_workspace_cursor(self._read_body())
+        elif path in ("/api/workspace/editor", "/api/workspace/cursor"):
+            # /api/workspace/cursor 为历史别名，保留兼容
+            self._api_workspace_editor(self._read_body())
         else:
             self._json(404, {"error": "not found"})
 
@@ -531,6 +521,8 @@ class Handler(BaseHTTPRequestHandler):
             "summary": index["summary"],
             "week": index.get("week"),            # 周口径：周一为起点
             "defaults": todo._defaults_view(),    # 可覆盖的默认值（仅用于表单预填）
+            "editor": todo.editor_status(),       # 编辑器可用性：不可用时前端不渲染「用编辑器打开」
+            "storage_dir": todo._storage_dir(),   # 生效的存储目录（只读展示）
             "items": items,
             "revision": _revision(),
         })
@@ -835,8 +827,8 @@ class Handler(BaseHTTPRequestHandler):
         ok, msg = _open_dir(_norm(body.get("path")))
         self._json(200 if ok else 400, {"ok": ok, "message": msg})
 
-    def _api_workspace_cursor(self, body):
-        ok, msg = _open_cursor(_norm(body.get("path")))
+    def _api_workspace_editor(self, body):
+        ok, msg = _open_editor(_norm(body.get("path")))
         self._json(200 if ok else 400, {"ok": ok, "message": msg})
 
 

@@ -11,10 +11,16 @@ SRC = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 
 PY = sys.executable
 
 
-def run(tmp, *args):
-    r = subprocess.run([PY, os.path.join(tmp, "scripts", "todo.py")] + list(args),
-                       capture_output=True, text=True, encoding="utf-8", errors="replace")
-    return r.returncode, (r.stdout or "").strip(), (r.stderr or "").strip()
+def run(tmp, *args, timeout=60):
+    """跑一条 CLI 命令。带超时保护：卡住的一律当成失败，不让自测整体挂死。"""
+    try:
+        r = subprocess.run([PY, os.path.join(tmp, "scripts", "todo.py")] + list(args),
+                           capture_output=True, text=True, encoding="utf-8", errors="replace",
+                           timeout=timeout)
+        return r.returncode, (r.stdout or "").strip(), (r.stderr or "").strip()
+    except subprocess.TimeoutExpired:
+        print("  FAIL  [超时 %ss] todo.py %s" % (timeout, " ".join(args)))
+        return 124, "", "timeout after %ss" % timeout
 
 
 def main():
@@ -281,6 +287,145 @@ def main():
     rc, out, err = run(tmp, "show", tid2)
     check("show 任务正常", rc == 0 and bool(out.strip()), (out or err)[:200])
 
+    # ------------------------------------------------------------------
+    print("== 16. 存储目录可配置（env --set storage_dir）==")
+    rc, out, err = run(tmp, "env")
+    check("env 输出生效的存储目录", "生效的存储目录" in out, (out or err)[:200])
+    default_storage = os.path.join(tmp, "storage")
+    store2 = os.path.join(tmp, "store2")
+    before_files = _count_md(default_storage)
+
+    # (a) 旧目录有数据且未做选择 -> 报错（退出码 2）且配置不动
+    rc, out, err = run(tmp, "env", "--set", "storage_dir=" + store2)
+    check("旧目录有数据时不选搬迁方式 -> 退出码 2", rc == 2, "rc=%s" % rc)
+    check("报错给出 --migrate / --no-migrate 两条路", "--migrate" in err and "--no-migrate" in err, err[:300])
+    rc, out, err = run(tmp, "env")
+    check("配置未被悄悄改动", store2 not in out, out[:200])
+
+    # (b) 目标目录已有内容 -> 校验不通过：中止、回滚配置、两边数据都保住
+    bad = os.path.join(tmp, "badstore")
+    os.makedirs(bad, exist_ok=True)
+    with open(os.path.join(bad, "2026-01-01.md"), "w", encoding="utf-8") as f:
+        f.write("# 待办 2026-01-01\n归档: false\nschema: 2\n---\n\n"
+                "## T-20260101-001\n状态: 进行中\n重要: 不重要\n紧急: 不紧急\n"
+                "内容: 占位\n创建: 2026-01-01 09:00\n")
+    rc, out, err = run(tmp, "env", "--set", "storage_dir=" + bad, "--migrate")
+    check("校验不通过时退出码 1", rc == 1, "rc=%s" % rc)
+    check("校验不通过时明确报错", "校验不通过" in err or "校验不通过" in out, (out + err)[:300])
+    check("失败后配置回滚到原目录", "已回滚" in (err + out), (err or out)[:300])
+    check("源数据未丢失", _count_md(default_storage) == before_files, str(os.listdir(default_storage)))
+    check("目标目录原有文件未被破坏", os.path.isfile(os.path.join(bad, "2026-01-01.md")))
+    check("失败时回删本次写入的半份副本", _count_md(bad) == 1, str(os.listdir(bad)))
+
+    # (c) --no-migrate：只改配置，旧数据原地不动
+    tmp3 = os.path.join(tmp, "store3")
+    rc, out, err = run(tmp, "env", "--set", "storage_dir=" + tmp3, "--no-migrate")
+    check("--no-migrate 退出码 0", rc == 0, (out or err)[:200])
+    check("--no-migrate 明确提示未搬迁", "未搬迁" in out, out[:300])
+    check("--no-migrate 后旧目录数据仍在", _count_md(default_storage) == before_files)
+    # 把配置改回原目录，好继续测真正的搬迁
+    rc, out, err = run(tmp, "env", "--set", "storage_dir=" + default_storage, "--no-migrate")
+    check("配置可改回原目录", rc == 0 and _count_md(default_storage) == before_files, (out or err)[:200])
+
+    # (d) 搬迁到新目录：文件搬走、旧目录清空、任务数不变
+    rc, out, err = run(tmp, "env", "--set", "storage_dir=" + store2, "--migrate")
+    check("--migrate 退出码 0", rc == 0, (out or err)[:300])
+    check("输出确认搬迁完成", "搬迁完成" in out, out[:300])
+    check("新目录拿到全部文件", _count_md(store2) == before_files,
+          "new=%d old=%d" % (_count_md(store2), before_files))
+    check("旧目录已清空", _count_md(default_storage) == 0, str(os.listdir(default_storage)))
+    rc, out, err = run(tmp, "list", "--state", "all")
+    check("搬迁后任务照常可读", rc == 0 and out.count("T-") >= before_files, (out or err)[:200])
+    rc, out, err = run(tmp, "index", "--rebuild")
+    check("搬迁场景后索引重建正常", rc == 0 and '"schema_version"' in out, (out or err)[:200])
+
+    # ------------------------------------------------------------------
+    print("== 17. 编辑器可配置（env --set editor.*）==")
+    rc, out, err = run(tmp, "env")
+    check("env 输出编辑器状态", "生效的编辑器" in out, (out or err)[:200])
+    check("未探测到时引导配置 editor.path", "editor.path" in out, out[-400:])
+
+    rc, out, err = run(tmp, "env", "--set", "editor.path=" + os.path.join(tmp, "no-such-editor.exe"))
+    check("editor.path 指向不存在的文件 -> 退出码 2", rc == 2, "rc=%s" % rc)
+    check("给出路径不存在的明确错误", "不存在" in err, err[:200])
+
+    rc, out, err = run(tmp, "env", "--set", "editor.path=definitely-not-a-command-xyz")
+    check("editor.path 是 PATH 里没有的命令名 -> 退出码 2", rc == 2, "rc=%s" % rc)
+    check("提示命令不在 PATH", "不在 PATH" in err, err[:200])
+
+    rc, out, err = run(tmp, "env", "--set", "editor.foo=bar")
+    check("未知 editor 子键被拒绝", rc == 2 and "editor." in err, (out + err)[:200])
+
+    # 用系统自带命令当编辑器替身，避免真弹编辑器窗口
+    if os.name == "nt":
+        ed_path = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "cmd.exe")
+        ed_args = ["--set", "editor.args=/c;exit"]
+    else:
+        ed_path = "/bin/true"
+        ed_args = []
+    rc, out, err = run(tmp, "env", "--set", "editor.path=" + ed_path,
+                       "--set", "editor.label=替身编辑器", *ed_args)
+    check("合法 editor.path 配置成功", rc == 0, (out or err)[:300])
+    check("env 显示配置的编辑器名", "替身编辑器" in out, out[-400:])
+
+    rc, out, err = run(tmp, "add", "--text", "编辑器联调", "--workspace",
+                       os.path.join(tmp, "wsdir"), "--force")
+    ed_id = _task_id_from(out) or ""
+    check("建带工作空间的任务成功", rc == 0 and bool(ed_id), (out or err)[:200])
+    if ed_id:
+        rc, out, err = run(tmp, "work", ed_id)
+        check("work 用配置的编辑器打开", rc == 0 and "替身编辑器" in out, (out + err)[:300])
+        check("work 不再写死 Cursor", "Cursor" not in out, out[:200])
+
+    # 真启动一次：用假编辑器记录收到的目录参数，证明进程真的被拉起来（不只拼了个命令）
+    # Windows 用 .cmd 还能顺带覆盖「.cmd 必须经 cmd.exe」这条分支。
+    marker = os.path.join(tmp, "editor-arg.txt")
+    if os.name == "nt":
+        fake = os.path.join(tmp, "fake-editor.cmd")
+        with open(fake, "w", encoding="utf-8") as f:
+            # 用 %~dp0 定位脚本同目录（拼字符串避免 \e 转义）
+            f.write('@echo off\r\necho %1 > "' + "%~dp0" + 'editor-arg.txt"\r\n')
+    else:
+        fake = os.path.join(tmp, "fake-editor.sh")
+        with open(fake, "w", encoding="utf-8") as f:
+            f.write('#!/bin/sh\necho "$1" > "$(dirname "$0")/editor-arg.txt"\n')
+        os.chmod(fake, 0o755)
+    # editor.args= 清掉上一步给 cmd.exe 替身配的 "/c;exit"，否则会被当成编辑器的固定前置参数
+    rc, out, err = run(tmp, "env", "--set", "editor.path=" + fake, "--set", "editor.label=假编辑器",
+                       "--set", "editor.args=")
+    check("可配置为脚本型编辑器", rc == 0, (out or err)[:200])
+    if ed_id:
+        rc, out, err = run(tmp, "work", ed_id)
+        check("work 退出码 0", rc == 0, (out + err)[:300])
+        import time
+        for _ in range(20):
+            if os.path.isfile(marker):
+                break
+            time.sleep(0.2)
+        # cmd.exe 在参数里含空格时会保留一层引号，剥掉后再比对路径语义
+        got = _read_file(marker).strip().strip('"')
+        check("编辑器进程真的被拉起并收到工作区目录",
+              bool(got) and os.path.basename(got.replace("/", os.sep)) == "wsdir",
+              "marker=%r" % got)
+
+    # 编辑器「配置了但文件后来消失」：work 仍完成标记进行中，但必须报错 + 给配置出口
+    fake_bak = fake + ".bak"
+    shutil.copy2(fake, fake_bak)
+    rc, out, err = run(tmp, "env", "--set", "editor.path=" + fake_bak, "--set", "editor.label=会失效")
+    check("配置临时编辑器成功", rc == 0, (out or err)[:200])
+    os.remove(fake_bak)
+    if ed_id:
+        rc, out, err = run(tmp, "work", ed_id)
+        check("编辑器失效时 work 仍标记进行中并返回 0", rc == 0 and "已标记进行中" in out,
+              (out + err)[:300])
+        check("编辑器失效时明确报错并给出配置命令", "editor.path" in err, err[:300])
+
+    # --reset 不能把用户配置冲掉
+    rc, out, err = run(tmp, "env", "--reset")
+    check("--reset 退出码 0", rc == 0, (out or err)[:200])
+    check("--reset 保留存储目录配置", store2 in out, out[:200])
+    check("--reset 保留用户默认值配置", '"status"' in out, out[:200])
+
     shutil.rmtree(tmp, ignore_errors=True)
     print("\n结果：" + ("全部通过" if ok else "存在失败项"))
     return 0 if ok else 1
@@ -357,6 +502,20 @@ def _first_id(tmp):
         if m:
             return m.group(1)
     return "T-00000000-000"
+
+
+def _count_md(d):
+    """目录下的 .md 文件数（不含子目录），用于搬迁前后比对。"""
+    if not os.path.isdir(d):
+        return 0
+    return len([f for f in os.listdir(d) if f.endswith(".md")])
+
+
+def _task_id_from(out):
+    """从命令输出里取第一个任务 ID。"""
+    import re
+    m = re.search(r"(T-\d{8}-\d{3})", out or "")
+    return m.group(1) if m else ""
 
 
 def _monday():

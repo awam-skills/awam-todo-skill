@@ -471,6 +471,9 @@ const store = {
   items: [], patches: [], revision: "", lastSavedAt: null,
   defaults: { status:"进行中", importance:"不重要", urgent:"不紧急" },
   week: null, schema: null,
+  // 编辑器配置来自后端 todo.py 的 env.json（可用性决定是否渲染「用编辑器打开」）
+  editor: { configured:false, available:false, label:null, path:null, error:null },
+  storageDir: null,
 };
 
 function $(id){ return document.getElementById(id); }
@@ -526,6 +529,8 @@ async function loadData(offerRestore){
   if (r.data.defaults) store.defaults = r.data.defaults;
   store.week = r.data.week || null;
   store.schema = r.data.schema_version;
+  if (r.data.editor) store.editor = r.data.editor;
+  store.storageDir = r.data.storage_dir || null;
   persistBaseline();
   render();
   if (offerRestore) maybeRestorePending();
@@ -726,13 +731,20 @@ function renderCard(t){
   }
 
   const meta = [];
-  if (t.workspace) meta.push(
-    '<span class="ws-wrap"><span class="ws">' + ic("folder","sm") + esc(t.workspace) + '</span>' +
-    '<div class="ws-menu" data-path="' + esc(t.workspace) + '">' +
-      '<button class="ws-item" data-ws-act="copy">'+ic("copy","sm")+'复制路径</button>' +
-      '<button class="ws-item" data-ws-act="open">'+ic("folder","sm")+'打开目录</button>' +
-      '<button class="ws-item" data-ws-act="cursor">'+ic("cursor","sm")+'用 Cursor 打开</button>' +
-    '</div></span>');
+  if (t.workspace) {
+    // 「用编辑器打开」只在 env.json 配好 editor 且可用时渲染；没配好就不显示，避免点了没反应
+    const ed = store.editor || {};
+    const edItem = ed.available
+      ? '<button class="ws-item" data-ws-act="editor">'+ic("pencil","sm")+'用' + esc(ed.label || "编辑器") + '打开</button>'
+      : '';
+    meta.push(
+      '<span class="ws-wrap"><span class="ws">' + ic("folder","sm") + esc(t.workspace) + '</span>' +
+      '<div class="ws-menu" data-path="' + esc(t.workspace) + '">' +
+        '<button class="ws-item" data-ws-act="copy">'+ic("copy","sm")+'复制路径</button>' +
+        '<button class="ws-item" data-ws-act="open">'+ic("folder","sm")+'打开目录</button>' +
+        edItem +
+      '</div></span>');
+  }
   if (t.date) meta.push('<span>' + ic("cal","sm") + esc(t.date) + '</span>');
   if (t.created) meta.push('<span>' + ic("clock","sm") + '创建 ' + esc(t.created) + '</span>');
   if (t.updated) meta.push('<span>' + ic("pencil","sm") + '更新 ' + esc(t.updated) + '</span>');
@@ -891,7 +903,7 @@ document.addEventListener("click", function(ev){
     var wsAct = wsItem.getAttribute("data-ws-act");
     if (wsAct === "copy") copyWorkspace(wsPath);
     else if (wsAct === "open") openWorkspace(wsPath, "open");
-    else if (wsAct === "cursor") openWorkspace(wsPath, "cursor");
+    else if (wsAct === "editor" || wsAct === "cursor") openWorkspace(wsPath, "editor");
     return;
   }
   var b = ev.target && ev.target.closest ? ev.target.closest(".mini-btn") : null;

@@ -1,6 +1,6 @@
 ---
 name: awam-todo
-version: 0.3.0
+version: 0.4.0
 description: >-
   输入与管理 Awam 的 To-Do：在会话中解析用户自然语言里的待办内容、重要性、备注、工作空间目录、
   相关文档、链接与时间，调用脚本追加到按日期划分的存储文件，并自动维护索引（todo / in_progress /
@@ -15,6 +15,9 @@ description: >-
   （进入新月自动把上月已全部完成的日文件合并进 `storage/archive/YYYY-MM.md`）。所有按周统计一律以
   **周一**为起点；数据不足时一律显示「暂无推算」，不编造数字。AI 创建待办时若未给标签，脚本会**推测
   标签但只作为建议值展示**（`suggest-tags` 可只读预取），确认后才写入，不代用户决定分类。
+  支持**两条可配置能力**：存储目录（`env --set storage_dir`，旧目录有数据时必须显式选 `--migrate`
+  搬迁或 `--no-migrate` 留原处，搬迁先复制、校验一致才删旧）与「用编辑器打开」的编辑器
+  （`env --set editor.path`，`init` 自动探测，未配置/失效时报错并停用入口，不猜路径）。
   当用户说“记一下/加个待办/帮我记/安排XX/提醒我X日做XX”或显式
   调用 /awam-todo 时使用；也用于列出、完成、标记进行中、重新打开、归档待办、设置依赖、管理子任务。
 ---
@@ -29,15 +32,17 @@ description: >-
 
 | 用户意图 | 执行 |
 |----------|------|
-| 首次使用 / 换机器后初始化环境 | `init`（识别工作环境并保存，统一工作空间） |
+| 首次使用 / 换机器后初始化环境 | `init`（识别工作环境、探测编辑器并保存，统一工作空间） |
 | 查看 / 修改环境配置（路径风格等） | `env`（可 `--set`、`--reformat-workspaces`） |
+| 换存储位置 / 迁移已有的待办数据 | `env --set storage_dir=<目录>` + `--migrate`（见「两条可配置能力」） |
+| 换「用编辑器打开」用的编辑器 | `env --set editor.path=<绝对路径或命令名>`（见「两条可配置能力」） |
 | 新增一条待办 | 解析 → `add`（含重复检测，见下） |
 | 检查是否重复 | `check --text "..."`（只读） |
 | 只读推测标签（只建议、不写入） | `suggest-tags --text "..."`（JSON 输出） |
 | 查看待办 | `list`（可按状态/日期筛选） |
 | 完成一条待办 | `done <id>`（前置依赖未结束需确认） |
 | 标记进行中 / 重新打开 | `start <id>`（前置依赖未结束需确认） / `reopen <id>` |
-| 继续工作（标记进行中并用 Cursor 打开工作区） | `work <id>`（别名 `continue`，前置依赖未结束需确认） |
+| 继续工作（标记进行中并用配置的编辑器打开工作区） | `work <id>`（别名 `continue`，前置依赖未结束需确认） |
 | 逾期了：改期 / 取消截止 | `postpone <id> "下周一"`（别名 `reschedule` / `replan`；`--clear` 取消截止） |
 | 设置 / 查看任务依赖 | `dep <id> [--add/--remove/--set/--clear] <dep_id...>` |
 | 列出某主任务下的子任务 | `children <id>`（别名 `sub`） |
@@ -76,7 +81,10 @@ python ...\todo.py init
 | `platform.is_windows` | 是否 Windows |
 | `platform.python_version` | Python 版本 |
 | `platform.hostname` / `platform.cwd` | 主机名 / 当前工作目录 |
-| `dirs.skill_dir` / `dirs.storage_dir` | 技能目录 / 存储目录 |
+| `dirs.skill_dir` / `dirs.storage_dir` | 技能目录 / **生效的存储目录**（可用 `env --set storage_dir` 改） |
+| `editor` | **「用编辑器打开」用的编辑器**（`path` / `label` / `args`，由探测或 `env --set editor.*` 写入） |
+
+`init` 会**保留**已保存的存储目录与编辑器配置（不会被重新探测冲掉）；`editor` 未配置时自动探测一次。
 
 `init` 还会把**已有存储文件中的工作空间**统一为当前 `path_style` 的格式（如 Windows 下全部转成
 `G:\Projects\...` 反斜杠）。
@@ -92,16 +100,68 @@ python ...\todo.py init
 ### `env` —— 查看 / 修改环境配置
 
 ```powershell
-python ...\todo.py env                                  # 查看当前环境配置
+python ...\todo.py env                                  # 查看当前环境配置（含存储目录与编辑器）
 python ...\todo.py env --set path_style=windows         # 修改路径风格（windows/posix/mixed）
-python ...\todo.py env --reset                          # 重新探测环境并覆盖保存
+python ...\todo.py env --reset                          # 重新探测环境并覆盖保存（含编辑器）
 python ...\todo.py env --set path_style=posix --reformat-workspaces
                                                          # 改风格并同步重写全部工作空间
 ```
 
-- `--set` 当前仅支持 `path_style`（`windows` / `posix` / `mixed`）。
 - `--reformat-workspaces`：把全部存储文件中的工作空间统一为当前 `path_style`（可配合改风格使用）。
 - 修改即写回 `env.json`；改风格后可重跑 `init` 或直接 `--reformat-workspaces` 让存量数据同步。
+
+## 两条可配置能力（技能必须知晓）
+
+本技能有**两个可配置项**，都存在 `env.json`，都能通过 `env --set` 修改。用户提到「换个地方存待办」
+「我用的不是 Cursor」「用 XX 编辑器打开」时，走这两条，不要改代码。
+
+### 1. 存储目录 `storage_dir`
+
+| 项 | 值 |
+|----|-----|
+| 默认 | 技能目录下的 `storage/`（未配置时自动回退到这里） |
+| 权威位置 | `env.json` 的 `dirs.storage_dir` |
+| 影响范围 | 全部读写：日文件、`archive/` 月度归档、`index.json` 重建 |
+
+```powershell
+# 旧目录还有待办时，必须显式二选一，否则报错（退出码 2）且不动配置
+python ...\todo.py env --set storage_dir="D:\awam-todo-data" --migrate     # 连数据一起搬
+python ...\todo.py env --set storage_dir="D:\awam-todo-data" --no-migrate  # 只改配置，不动数据
+```
+
+搬迁语义（`_migrate_storage`，**这是数据安全的硬约束，不要绕过**）：
+
+1. **先复制**到新目录（`YYYY-MM-DD.md` + `archive/`）；
+2. **再校验**新旧的文件数与任务块数一致；
+3. **校验通过才删除**旧目录文件；
+4. 任何一步失败都中止、**保留旧目录原样**，并回滚配置指向原目录，同时回删本次写入的半份副本。
+
+路径支持 `~`、`%VAR%` / `$VAR` 环境变量展开；相对路径按相对技能目录解析。写入前会校验可创建、可写。
+
+### 2. 编辑器 `editor`
+
+「用编辑器打开工作区」（CLI `work`、网页路径菜单）不再写死 Cursor，改用 `env.json` 的 `editor` 段：
+
+| 键 | 说明 |
+|----|------|
+| `editor.path` | **必填**。编辑器可执行文件绝对路径，或 PATH 里的命令名（如 `code` / `cursor`） |
+| `editor.label` | 选填。显示名，用于提示文案与网页菜单（如「用 VS Code 打开」） |
+| `editor.args` | 选填。固定前置参数，多个用 `;` 分隔 |
+
+```powershell
+python ...\todo.py env --set editor.path="D:\Apps\Cursor\Cursor.exe"      # 绝对路径
+python ...\todo.py env --set editor.path=code                             # 或 PATH 里的命令名
+python ...\todo.py env --set editor.label="VS Code"
+python ...\todo.py env --set "editor.args=--new-window"
+```
+
+- `init` / `env --reset` 会**自动探测**常见编辑器（Cursor、VS Code、Trae、Windsurf、Sublime Text、Zed）。
+  探测表 `EDITOR_CANDIDATES` 是 `todo.py` 里的中文注释常量，想加别的编辑器直接加一行。
+- 探测不到就**不写** `editor` 配置，留给你显式指定。
+- **未配置或路径失效时一律报错并停用入口**：CLI `work` 打印错误 + 可复制的配置命令（`work` 的主职责
+  「标记进行中」已完成，返回码仍为 0）；网页**不渲染**「用编辑器打开」菜单项。
+  **不要**退化成「按软件名猜路径」或「静默用系统默认程序打开」。
+- 启动编辑器时会切断 stdio 并脱离进程组，避免编辑器占住调用方的管道。
 
 ## 会话中解析（新增待办的核心步骤）
 
@@ -427,8 +487,12 @@ python "...\awam-todo\web\server.py" --no-browser # 只启动不打开浏览器
 - **图标全部内联 SVG，不使用 emoji**；语义色三态：绿=已完成，红=逾期，琥珀=停滞/容错（区别于错误）。
 - **首尾双新建入口**：顶部「＋新增待办」按钮 + 列表底部的大号虚线「新增待办」卡。
 - **标签**：新增/编辑可填标签（`;` 分隔）；卡片显示 `#标签` 徽章；工具栏有标签下拉过滤（含各标签计数）。
-- **工作空间浮动菜单跟随鼠标**：悬浮在项目路径上时，操作菜单（复制路径 / 打开目录 / 用 Cursor 打开）
+- **工作空间浮动菜单跟随鼠标**：悬浮在项目路径上时，操作菜单（复制路径 / 打开目录 / 用编辑器打开）
   以鼠标位置为弹出中点（水平居中、略低于光标），跟随鼠标移动；移入菜单后锁定，方便点击。
+- **「用编辑器打开」按配置渲染**：菜单项文案取自 `env.json` 的 `editor.label`（如「用 VS Code 打开」）；
+  `editor` 未配置或路径失效时**整个菜单项不渲染**，避免点了没反应。对应接口
+  `POST /api/workspace/editor`（`/api/workspace/cursor` 为历史别名）。**网页只改文案，不提供配置界面**——
+  配置一律走 CLI `env --set`。
 - **延迟保存（patch 机制）**：网页操作不再实时写文件，所有修改先在浏览器内存 + 浏览器存储
   （`localStorage`：`awam-todo:baseline` / `awam-todo:pending`）中暂存为 patch 队列；保存时一次性
   `POST /api/todos/apply-patches` 对比**当时最新的文件**应用 patch 后落盘，避免与命令行并发写冲突。

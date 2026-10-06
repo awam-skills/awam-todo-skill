@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""awam-todo 改造后的场景自测：在临时目录里跑，不碰真实 storage。"""
+"""awam-todo 改造后的场景自测：在临时目录里跑，不碰真实 storage。
+
+临时目录默认「通过即删、失败保留」；AWAM_TODO_KEEP_TMP=1/0 可强制保留 / 强制清理。
+"""
 import os
 import shutil
 import subprocess
@@ -426,7 +429,14 @@ def main():
     check("--reset 保留存储目录配置", store2 in out, out[:200])
     check("--reset 保留用户默认值配置", '"status"' in out, out[:200])
 
-    shutil.rmtree(tmp, ignore_errors=True)
+    # 通过就清掉临时目录；失败时留下现场，便于照着失败项翻文件排查。
+    # 想强制清理（或强制保留）用环境变量 AWAM_TODO_KEEP_TMP=0 / 1。
+    keep_env = os.environ.get("AWAM_TODO_KEEP_TMP")
+    keep = (keep_env == "1") if keep_env in ("0", "1") else (not ok)
+    if keep:
+        print("\n临时目录（排查用，可删）：%s" % tmp)
+    else:
+        shutil.rmtree(tmp, ignore_errors=True)
     print("\n结果：" + ("全部通过" if ok else "存在失败项"))
     return 0 if ok else 1
 

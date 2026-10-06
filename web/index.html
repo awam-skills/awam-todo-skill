@@ -165,7 +165,7 @@
              display:flex;align-items:center;justify-content:center;gap:8px;font-family:inherit;transition:.15s}
   .new-entry:hover{background:#e8e0ff;border-color:var(--brand)}
 
-  /* 工作空间浮动菜单：以鼠标位置为弹出中点 */
+  /* 工作空间浮动菜单：纵向锚定路径元素（不跟随鼠标），横向跟随鼠标 */
   .ws-wrap{position:relative;display:inline-flex}
   .ws{cursor:pointer;border-bottom:1px dashed var(--muted);padding-bottom:1px;transition:.15s;
       display:inline-flex;align-items:center;gap:4px}
@@ -173,6 +173,11 @@
   .ws-menu{position:fixed;left:-9999px;top:-9999px;background:#fff;border:1px solid var(--line);
            border-radius:10px;box-shadow:0 8px 24px rgba(20,40,80,.16);min-width:158px;padding:5px;
            display:none;flex-direction:column;gap:2px;z-index:60}
+  /* 透明桥接带：盖住路径元素与菜单之间的空隙，鼠标往下走时不会丢掉 :hover。
+     高度必须大于 JS 里的 WS_GAP，否则中间仍有断带，菜单永远进不去。 */
+  .ws-menu::before{content:"";position:absolute;left:0;right:0;top:-14px;height:14px;background:transparent}
+  /* 下方空间不足时菜单翻转到路径元素上方，桥接带跟着改到下面 */
+  .ws-menu.upward::before{top:100%;bottom:auto}
   .ws-wrap:hover .ws-menu{display:flex}
   .ws-item{display:flex;align-items:center;gap:7px;width:100%;text-align:left;padding:7px 10px;border:none;
            background:transparent;border-radius:7px;font-size:13px;cursor:pointer;font-family:inherit;color:var(--text)}
@@ -757,29 +762,124 @@ function mbtn(label, cls, id, act){
   return '<button class="mini-btn '+cls+'" data-id="'+id+'" data-act="'+act+'">'+label+'</button>';
 }
 
-// ---------- 工作空间浮动菜单（跟随鼠标） ----------
+// ---------- 工作空间浮动菜单（纵向锚定路径元素，横向跟随鼠标） ----------
+// 定位口径：纵向 top 只认「路径元素」的位置，横向 left 跟鼠标走。
+// 这样菜单不会跟着鼠标上下漂移，鼠标始终能垂直移动到菜单上。
+const WS_GAP = 6;           // 菜单与路径元素的垂直间隙（px）；CSS 桥接带须高于它（见 .ws-menu::before）
+const WS_MARGIN = 8;        // 与视口边缘的最小留白（px）
+const WS_OVERLAP = 24;      // 菜单与路径元素的最小水平重叠宽度（px），防止垂直下落时落空
+const WS_FALLBACK_W = 160;  // 菜单尚未布局时的兜底宽（px）
+const WS_FALLBACK_H = 118;  // 菜单尚未布局时的兜底高（px）
+
 let lastMouse = { x:0, y:0 };
-function visibleWsMenu(){
-  const menu = document.querySelector(".ws-menu");
-  return (menu && getComputedStyle(menu).display !== "none") ? menu : null;
+
+function clampNum(v, lo, hi){
+  if (hi < lo) hi = lo;
+  return Math.max(lo, Math.min(v, hi));
+}
+function wsWrapOf(node){
+  return (node && node.closest) ? node.closest(".ws-wrap") : null;
+}
+function wsAnchorRect(menu){
+  const wrap = wsWrapOf(menu);
+  if (wrap && wrap.getBoundingClientRect) return wrap.getBoundingClientRect();
+  return null;
+}
+function wsMenuSize(menu){
+  return { w: menu.offsetWidth || WS_FALLBACK_W, h: menu.offsetHeight || WS_FALLBACK_H };
+}
+function wsMenuShown(menu){
+  const st = (typeof getComputedStyle === "function") ? getComputedStyle(menu) : null;
+  return st ? st.display !== "none" : true;
+}
+// 当前真正显示的菜单：优先取「正在 hover 的 wrap 的菜单」。
+// 不能用 document.querySelector(".ws-menu")——文档里每张卡片都有一个，那样会取到别人家的菜单。
+function activeWsMenu(){
+  const hovered = document.querySelector(".ws-wrap:hover .ws-menu");
+  if (hovered) return hovered;
+  const list = document.querySelectorAll ? document.querySelectorAll(".ws-menu") : [];
+  for (let i = 0; i < list.length; i++){
+    if (wsMenuShown(list[i])) return list[i];
+  }
+  return null;
+}
+// 纵向：锚定路径元素底边；下方放不下则翻转到路径元素上方
+function computeWsTop(menu, rect){
+  const size = wsMenuSize(menu);
+  const vh = window.innerHeight || 800;
+  const maxTop = Math.max(WS_MARGIN, vh - size.h - WS_MARGIN);
+  if (!rect){
+    // 量不到路径元素时不猜位置，贴顶摆放（总比悬空一个追不上的浮层强）
+    return { top: Math.round(WS_MARGIN), flip: false };
+  }
+  const below = rect.bottom + WS_GAP;
+  const above = rect.top - WS_GAP - size.h;
+  const flip = (below + size.h > vh - WS_MARGIN) && (above >= WS_MARGIN);
+  return { top: Math.round(clampNum(flip ? above : below, WS_MARGIN, maxTop)), flip: flip };
+}
+// 横向：跟随鼠标；若被推到与路径元素水平不重叠的位置，则拉回来，保证垂直移动能进菜单
+function computeWsLeft(menu, rect){
+  const size = wsMenuSize(menu);
+  const vw = window.innerWidth || 1024;
+  const maxLeft = Math.max(WS_MARGIN, vw - size.w - WS_MARGIN);
+  let x = Math.round(clampNum(lastMouse.x - Math.round(size.w / 2), WS_MARGIN, maxLeft));
+  if (rect){
+    const need = Math.min(WS_OVERLAP, Math.max(1, rect.width || 0));
+    if (x + size.w < rect.left + need) x = Math.round(rect.left + need - size.w);
+    if (x > rect.right - need) x = Math.round(rect.right - need);
+    x = Math.round(clampNum(x, WS_MARGIN, maxLeft));
+  }
+  return x;
+}
+// 完整定位（重算纵向锚点）：进入路径元素、滚动、窗口缩放时调用
+function positionWsMenu(menu){
+  if (!menu) return;
+  const rect = wsAnchorRect(menu);
+  const anchor = computeWsTop(menu, rect);
+  menu.dataset.anchorTop = String(anchor.top);          // 纵向锚点缓存下来，鼠标移动时不重算
+  menu.dataset.anchorFlip = anchor.flip ? "1" : "0";
+  menu.style.top = anchor.top + "px";
+  menu.style.left = computeWsLeft(menu, rect) + "px";
+  if (anchor.flip) menu.classList.add("upward"); else menu.classList.remove("upward");
+  scheduleWsReposition(menu);
+}
+// 只跟横向：鼠标移动时调用，纵向锚点直接用缓存值
+function followWsMenuX(menu){
+  if (!menu) return;
+  const cached = parseInt(menu.dataset.anchorTop, 10);
+  if (isNaN(cached)) { positionWsMenu(menu); return; }   // 还没锚定过，先完整定位一次
+  menu.style.left = computeWsLeft(menu, wsAnchorRect(menu)) + "px";
+}
+// 首次定位时菜单还是 display:none（量不到真实尺寸），等它真正显示后再按真实尺寸校正一次
+function scheduleWsReposition(menu){
+  if (typeof requestAnimationFrame !== "function") return;
+  if (menu.offsetWidth) return;                    // 已经量到真实宽度，无需校正
+  if (menu.dataset.anchorPending === "1") return;  // 已排过队，避免重复堆叠 rAF
+  menu.dataset.anchorPending = "1";
+  requestAnimationFrame(function(){
+    menu.dataset.anchorPending = "0";
+    if (menu.offsetWidth) positionWsMenu(menu);    // 此时已可见，量到的尺寸可信
+  });
+}
+function repositionActiveWsMenu(){
+  const menu = activeWsMenu();
+  if (menu) positionWsMenu(menu);
 }
 document.addEventListener("mousemove", function(ev){
   lastMouse.x = ev.clientX; lastMouse.y = ev.clientY;
-  const menu = visibleWsMenu();
-  if (menu && !menu.contains(ev.target)) positionWsMenu(menu);
+  const menu = activeWsMenu();
+  if (menu && !(menu.contains && menu.contains(ev.target))) followWsMenuX(menu);
 });
 document.addEventListener("mouseover", function(ev){
-  const wrap = ev.target && ev.target.closest ? ev.target.closest(".ws-wrap") : null;
+  const wrap = wsWrapOf(ev.target);
   if (!wrap) return;
-  const menu = wrap.querySelector(".ws-menu");
+  if (ev.clientX != null) { lastMouse.x = ev.clientX; lastMouse.y = ev.clientY; }
+  const menu = wrap.querySelector ? wrap.querySelector(".ws-menu") : null;
   if (menu) positionWsMenu(menu);
 });
-function positionWsMenu(menu){
-  const w = menu.offsetWidth || 160, h = menu.offsetHeight || 118;
-  let x = Math.max(8, Math.min(lastMouse.x - Math.round(w/2), window.innerWidth - w - 8));
-  let y = Math.max(8, Math.min(lastMouse.y + 14, window.innerHeight - h - 8));
-  menu.style.left = x + "px"; menu.style.top = y + "px";
-}
+// 路径元素会随滚动/resize 移动，纵向锚点必须跟着重算
+window.addEventListener("scroll", repositionActiveWsMenu, true);
+window.addEventListener("resize", repositionActiveWsMenu);
 
 // 事件委托
 document.addEventListener("click", function(ev){

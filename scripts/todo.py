@@ -20,6 +20,7 @@ awam-todo —— 输入与管理 To-Do 的实现脚本。
   python todo.py add --update-id T-20261002-001 --text "撰写季度报告"   # 确认后更新已有
   python todo.py add --force --text "撰写季度报告"                     # 跳过重复检测强制新建
   python todo.py check --text "撰写季度报告"                           # 只读查重
+  python todo.py suggest-tags --text "背单词"                          # 只读推测标签（只建议，不写入）
   python todo.py list
   python todo.py list --state urgent
   python todo.py list --state overdue                                 # 逾期（带天数与出口提示）
@@ -104,6 +105,38 @@ ARCHIVE_DIR = os.path.join(STORAGE_DIR, "archive")
 # 旧值 -> 新枚举 的迁移映射（兼容历史存储文件）
 _OLD_STATUS = {"open": "待开始", "in_progress": "进行中", "done": "结束"}
 _OLD_IMPORTANCE = {"高": "重要", "中": "不重要", "低": "不重要"}
+
+# ---- 标签推测（只给建议，不自动写入） --------------------------------------
+# 原则：宁可不给建议，绝不给离谱建议。证据不足时返回空列表，由 AI 拿去问用户。
+# 词表全部是中文常量，用不上的直接增删即可，不必改代码。
+TAG_MAX_SUGGEST = 3          # 最多给几个建议
+TAG_MIN_KEYWORD_LEN = 2      # 短于该长度的关键词不参与匹配，避免「的/了」这类误伤
+TAG_MIN_SCORE = 1.0          # 低于该把握度不给建议
+TAG_RULE_SCORE = 1.0         # 关键词规则命中一次的把握度
+TAG_WORKSPACE_SCORE = 0.6    # 仅由工作空间路径给出的把握度（低于阈值，需搭配其它证据才出场）
+TAG_HISTORY_BASE = 1.0       # 历史标签命中的基础把握度
+TAG_HISTORY_MIN_SCORE = 0.34 # 与历史任务的相关度门槛
+TAG_HISTORY_MIN_TOKENS = 2   # 共享片段数门槛：达到就算同类，避免被长句稀释掉（二者取其一）
+# 内容/备注关键词 -> 建议标签（每条规则最多贡献一次，长句不会刷分）
+TAG_RULES = (
+    ("学习", ("学习", "背单词", "单词", "读书", "阅读", "课程", "课件",
+             "刷题", "复习", "考研", "论文", "教程", "网课", "预习")),
+    ("英语", ("english", "英语", "单词", "口语", "听力", "雅思", "托福")),
+    ("开发", ("bug", "修复", "重构", "测试", "单测", "编码", "接口", "部署",
+             "脚本", "函数", "依赖", "上线", "调试", "日志")),
+    ("工作", ("会议", "汇报", "周报", "月报", "评审", "对齐", "客户", "绩效", "面试")),
+    ("文档", ("文档", "readme", "笔记", "总结", "复盘", "说明书", "wiki")),
+    ("健康", ("体检", "跑步", "健身", "睡觉", "作息", "医院", "吃药", "减肥")),
+    ("生活", ("买菜", "打扫", "洗衣", "缴费", "房租", "快递", "快递取件")),
+)
+# 工作空间路径中的领域词 -> 建议标签（仅作辅助证据，单独命中不足以成建议）
+TAG_WORKSPACE_RULES = (
+    ("开发", ("src", "code", "dev", "repo", "project", "github", "gitlab")),
+    ("学习", ("course", "learn", "study", "note", "notes", "book")),
+    ("文档", ("doc", "docs", "wiki", "readme")),
+    ("数据", ("data", "dataset", "db", "sql", "etl")),
+    ("交易", ("stock", "trade", "quant", "futures")),
+)
 
 
 def _norm_status(v):
@@ -936,6 +969,166 @@ def _split_list_field(raw):
     return [x.strip() for x in (raw or "").split(";") if x.strip()]
 
 
+# ---- 标签推测（只读、不落库） ---------------------------------------------
+_ASCII_TOKEN_RE = re.compile(r"[a-z0-9]+")
+_CJK_TOKEN_RE = re.compile(r"[\u4e00-\u9fff]+")
+_PATH_SPLIT_RE = re.compile(r"[^0-9a-z\u4e00-\u9fff]+")
+
+
+def _suggest_tokens(text):
+    """把文本切成可比对的片段：英文/数字单词、中文相邻二字组，以及中文单字。
+
+    二字组用于抵消语序差异，单字用于兜住「背{托福|英语}单词」这类只差一两个字的近义表述；
+    两者一起用，靠后面的相关度门槛把噪声压下去。
+    """
+    s = _norm(text).lower()
+    out = set()
+    for w in _ASCII_TOKEN_RE.findall(s):
+        if len(w) >= TAG_MIN_KEYWORD_LEN:
+            out.add(w)
+    for seg in _CJK_TOKEN_RE.findall(s):
+        if len(seg) < TAG_MIN_KEYWORD_LEN:
+            continue
+        for ch in seg:
+            out.add(ch)
+        for i in range(len(seg) - 1):
+            out.add(seg[i:i + 2])
+    return out
+
+
+def _suggest_token_match(a, b):
+    """返回 (相关度, 共享片段数)。相关度 = 共有片段 / 较少一方片段数，0~1；无片段时一律 0，不编造。"""
+    ta, tb = _suggest_tokens(a), _suggest_tokens(b)
+    if not ta or not tb:
+        return 0.0, 0
+    inter = len(ta & tb)
+    if not inter:
+        return 0.0, 0
+    return min(1.0, inter / float(min(len(ta), len(tb)))), inter
+
+
+def _suggest_hit_word(word, body):
+    """判断关键词是否命中：纯英文/数字按词边界匹配（避免 bug 命中的 debug），中文按子串匹配。"""
+    w = _norm(word).lower()
+    if not w or len(w) < TAG_MIN_KEYWORD_LEN:
+        return False
+    if re.fullmatch(r"[a-z0-9]+", w):
+        return re.search(r"(?<![a-z0-9])" + re.escape(w) + r"(?![a-z0-9])", body) is not None
+    return w in body
+
+
+def _suggest_path_tokens(workspace):
+    """切出工作空间路径里的词，用于识别领域。"""
+    s = _norm(workspace).lower()
+    return set(x for x in _PATH_SPLIT_RE.split(s) if x)
+
+
+def _suggest_history_hits(text, note="", workspace=""):
+    """扫历史任务：内容相关、且打过标签的旧任务，其标签可作为建议。"""
+    probe = " ".join([text or "", note or "", workspace or ""])
+    files = _scan_files()          # 只读一次，避免逐条重复扫盘
+    hits = []
+    for date in sorted(files.keys(), reverse=True):
+        for t in files[date]["tasks"]:
+            tags = [x for x in (t.get("tags") or []) if _norm(x)]
+            if not tags:
+                continue
+            old = " ".join([t.get("text") or "", t.get("note") or "", t.get("workspace") or ""])
+            score, shared = _suggest_token_match(probe, old)
+            # 相关度达标，或共享片段够多（长句会把比值稀释掉），才算同一类事
+            if score < TAG_HISTORY_MIN_SCORE and shared < TAG_HISTORY_MIN_TOKENS:
+                continue
+            for tag in tags:
+                hits.append({
+                    "tag": tag,
+                    "score": round(TAG_HISTORY_BASE + score, 3),
+                    "source": "history",
+                    "evidence": "历史任务 %s《%s》用过标签「%s」（相关度 %.2f）"
+                                % (t.get("id"), t.get("text"), tag, score),
+                })
+    return hits
+
+
+def _suggest_keyword_hits(text, note="", workspace=""):
+    """按词表规则推测：正文/备注命中领域词，工作空间路径命中领域词。"""
+    body = " ".join([text or "", note or ""]).lower()
+    path_tokens = _suggest_path_tokens(workspace)
+    hits = []
+    for tag, words in TAG_RULES:
+        matched = [w for w in words if _suggest_hit_word(w, body)]
+        if matched:
+            hits.append({
+                "tag": tag, "score": TAG_RULE_SCORE, "source": "keyword",
+                "evidence": "命中领域词：" + "、".join(matched[:3]),
+            })
+    for tag, words in TAG_WORKSPACE_RULES:
+        matched = [w for w in words if w in path_tokens]
+        if matched:
+            hits.append({
+                "tag": tag, "score": TAG_WORKSPACE_SCORE, "source": "workspace",
+                "evidence": "工作空间含领域词：" + "、".join(matched[:3]),
+            })
+    return hits
+
+
+def _suggest_tags(text, note="", workspace="", existing=None):
+    """推测合适的标签。只读，不写入存储。
+
+    策略：历史标签复用（同一类旧任务打过的标签）+ 词表规则（正文/备注/工作空间）。
+    返回 dict：
+      suggestions: 建议标签（把握度降序，最多 TAG_MAX_SUGGEST 个）；没把握则为空列表
+      details:     [{'tag','score','source','evidence'}, ...]，便于向用户解释依据
+      reason:      {'history':bool,'keyword':bool,'evidence':[...]} 概览
+    """
+    result = {"suggestions": [], "details": [], "reason": {"history": False, "keyword": False, "evidence": []}}
+    text = _norm(text)
+    if not text:
+        return result
+    have = set(_norm(x) for x in (existing or []) if _norm(x))
+
+    history_hits = _suggest_history_hits(text, note, workspace)
+    keyword_hits = _suggest_keyword_hits(text, note, workspace)
+    if not history_hits and not keyword_hits:
+        # 数据不足就不给建议：宁可不说，不要说错
+        return result
+
+    # 同一个标签被多条独立证据支撑时，把握度累加；只被单一弱证据支撑的会卡在阈值外
+    merged = {}
+    for h in history_hits + keyword_hits:
+        tag = _norm(h["tag"])
+        if not tag or tag in have:
+            continue
+        cur = merged.get(tag)
+        if cur is None:
+            cur = {"tag": tag, "score": 0.0, "sources": [], "evidence": ""}
+            merged[tag] = cur
+        cur["score"] = round(cur["score"] + h["score"], 3)
+        if h["source"] not in cur["sources"]:
+            cur["sources"].append(h["source"])
+        # 证据去重后再拼接，避免同一句话重复出现在输出里
+        if h["evidence"] and h["evidence"] not in cur["evidence"]:
+            cur["evidence"] = (cur["evidence"] + "；" + h["evidence"]) if cur["evidence"] else h["evidence"]
+    ranked = sorted(merged.values(), key=lambda h: (-h["score"], h["tag"]))
+    kept = [h for h in ranked if h["score"] >= TAG_MIN_SCORE][:TAG_MAX_SUGGEST]
+
+    result["details"] = [{"tag": h["tag"], "score": h["score"],
+                          "source": "+".join(h["sources"]), "evidence": h["evidence"]} for h in kept]
+    result["suggestions"] = [h["tag"] for h in kept]
+    result["reason"] = {
+        "history": bool(history_hits),
+        "keyword": bool(keyword_hits),
+        "evidence": [h["evidence"] for h in kept],
+    }
+    return result
+
+
+def _print_tag_suggestion(tid, suggested):
+    """把建议标签打印出来提醒确认——注意：这里只打印，绝不写入。"""
+    tags_str = ";".join(suggested)
+    print("  建议标签: %s（尚未写入；确认后用：add --update-id %s --tags \"%s\"）"
+          % (tags_str, tid, tags_str))
+
+
 def _apply_task_fields(task, args, now, *, is_new):
     """把 add 参数落到 task。新建时填默认值；更新时仅覆盖用户显式传入的字段。"""
     if args.status is not None:
@@ -1180,6 +1373,31 @@ def cmd_add(args, now=None):
     idx = build_index(now)
     prefix = "已强制新建" if args.force else "已添加"
     _print_task_summary(prefix, tid, date, task, idx)
+    # 没给标签时才推测：只给建议，不写入——由 AI 拿着建议问用户，确认后再用 --update-id 落库
+    if not _split_list_field(args.tags):
+        sug = _suggest_tags(text, task.get("note", ""), task.get("workspace", ""),
+                            existing=task.get("tags"))
+        if sug["suggestions"]:
+            _print_tag_suggestion(tid, sug["suggestions"])
+            for line in sug["reason"]["evidence"][:TAG_MAX_SUGGEST]:
+                print("    依据: %s" % line)
+    return 0
+
+
+def cmd_suggest_tags(args):
+    """只读推测标签（JSON），供 AI 在建任务之前先问用户，不必先建后改。"""
+    text = _norm(args.text)
+    if not text:
+        print("错误：必须提供 --text。", file=sys.stderr)
+        return 2
+    res = _suggest_tags(text, args.note or "", args.workspace or "")
+    print(json.dumps({
+        "text": text,
+        "suggestions": res["suggestions"],
+        "reason": res["reason"],
+        "details": res["details"],
+        "written": False,          # 明确告知调用方：什么都没写进存储
+    }, ensure_ascii=False, indent=2))
     return 0
 
 
@@ -1875,6 +2093,11 @@ def main():
     pc.add_argument("--text", required=True)
     pc.add_argument("--exclude-id", default="", help="比对时排除的任务 ID")
 
+    pts = sub.add_parser("suggest-tags", help="推测标签（只给建议，不写入；JSON 输出）")
+    pts.add_argument("--text", required=True, help="待办内容")
+    pts.add_argument("--note", default="", help="备注（同样作为推测依据）")
+    pts.add_argument("--workspace", default="", help="工作空间路径（同样作为推测依据）")
+
     pd = sub.add_parser("done", help="完成任务（全部完成则自动归档该文件；前置依赖未结束需确认）")
     pd.add_argument("id")
     pd.add_argument("--force", action="store_true", help="忽略前置依赖未完成的硬检查，强制完成")
@@ -1936,6 +2159,7 @@ def main():
     handlers = {
         "add": lambda a: cmd_add(a),
         "check": lambda a: cmd_check(a),
+        "suggest-tags": lambda a: cmd_suggest_tags(a),
         "done": lambda a: cmd_done(a),
         "start": lambda a: cmd_start(a),
         "work": lambda a: cmd_work(a),

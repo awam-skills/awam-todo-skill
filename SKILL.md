@@ -59,8 +59,12 @@ description: >-
 ## 调用
 
 ```powershell
-python "C:\Users\Administrator\.agents\skills\awam-todo\scripts\todo.py" <命令> <参数>
+python "<技能目录>\scripts\todo.py" <命令> <参数>
 ```
+
+`<技能目录>` 指本技能的安装目录（Windows 下通常形如
+`C:\Users\<用户名>\.agents\skills\awam-todo`，按实际安装位置替换）。下文命令统一简写为
+`python ...\todo.py`。
 
 ## 工作环境识别与路径统一（必读）
 

@@ -12,6 +12,8 @@ awam-todo —— 输入与管理 To-Do 的实现脚本。
   5. 存储格式带 schema 版本（文件头 `schema: N`，index.json 的 schema_version），
      旧版本用 `migrate` 迁移；按周统计一律以「周一」为起点。
   6. 进入新月份时，把上月及更早的「可归档日文件」合并进 storage/archive/YYYY-MM.md。
+  7. 成功添加 / 维护待办后自动检查本地网页服务（web/server.py）是否在运行，未启动时
+     弹框询问用户是否启动 UI（ui.port / ui.prompt 可配置，见下）。
 
 用法示例：
   python todo.py add --text "撰写季度报告" --importance 重要 --due "2026-10-05 10:00"
@@ -51,6 +53,8 @@ awam-todo —— 输入与管理 To-Do 的实现脚本。
   python todo.py env --set storage_dir="D:/awam-todo-data" --no-migrate    # 只改配置，不搬
   python todo.py env --set editor.path="D:/Apps/Cursor/Cursor.exe"         # 配置「用编辑器打开」用的编辑器
   python todo.py env --set editor.label="Cursor" --set "editor.args=--new-window"
+  python todo.py env --set ui.port=9000                 # 网页 UI 服务端口（默认 8796）
+  python todo.py env --set ui.prompt=off                # 维护后不弹框询问启动网页 UI
   python todo.py env --reset                               # 重新探测（含编辑器）
   python todo.py env --set path_style=windows              # 路径风格
   python todo.py env --set defaults.status=待开始          # 新增待办的默认值
@@ -90,6 +94,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from difflib import SequenceMatcher
 
 SKILL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -122,6 +127,16 @@ STALL_DAYS = 3
 # 预计完成日所需的最小样本数（进展记录）。当前无进展记录层，恒为「暂无推算」。
 PROJECTION_MIN_SAMPLES = 3
 # 月度归档目录：<storage_dir>/archive/YYYY-MM.md，随存储目录走。见 _archive_dir()。
+
+# ---- 网页 UI 服务（本地，web/server.py）----------------------------------
+# 成功「添加 / 维护」一条待办后，检查本地网页服务是否在运行；未运行时按 ui.prompt
+# 配置弹框询问用户是否启动 UI，用户选择启动则后台拉起服务并自动打开浏览器。
+UI_DEFAULT_PORT = 8796             # 与 web/server.py 默认端口一致
+UI_PROMPT_MODE_DEFAULT = "ask"     # ask=未启动时弹框询问；off=不检查不询问
+# 触发检查的命令集合（只读命令一律不触发）。别名在 main() 里仍以输入名为 args.cmd，
+# 因此 continue / reschedule / replan 也在集合内；dep 带改动参数时才触发（见 _ui_prompt_needed）。
+UI_PROMPT_MUTATING_CMDS = ("add", "done", "start", "work", "continue", "reopen",
+                           "postpone", "reschedule", "replan", "deparent")
 
 # 旧值 -> 新枚举 的迁移映射（兼容历史存储文件）
 _OLD_STATUS = {"open": "待开始", "in_progress": "进行中", "done": "结束"}
@@ -2323,6 +2338,8 @@ def cmd_env(args):
       editor.label=<显示名>           （别名 editor.name）
       editor.args=<固定前置参数，分号分隔>
       defaults.status / defaults.importance / defaults.urgent
+      ui.port=<1-65535>               （网页 UI 服务端口，默认 8796）
+      ui.prompt=ask|off               （维护后未启动时弹框询问启动 / 关闭）
     --reset 重新探测环境（含编辑器）；--reformat-workspaces 统一工作空间分隔符。
     """
     old_storage = _storage_dir()
@@ -2385,9 +2402,26 @@ def cmd_env(args):
                 print("错误：defaults.%s 仅支持 %s" % (dk, " / ".join(sorted(allowed))), file=sys.stderr)
                 return 2
             env.setdefault("defaults", {})[dk] = v
+        elif k.startswith("ui."):
+            uk = k[len("ui."):]
+            if uk == "port":
+                if not re.fullmatch(r"\d{1,5}", v) or not (1 <= int(v) <= 65535):
+                    print("错误：ui.port 需为 1-65535 的端口号", file=sys.stderr)
+                    return 2
+                env.setdefault("ui", {})["port"] = int(v)
+            elif uk == "prompt":
+                if v not in ("ask", "off"):
+                    print("错误：ui.prompt 仅支持 ask（默认，未启动时询问）/ off（关闭）",
+                          file=sys.stderr)
+                    return 2
+                env.setdefault("ui", {})["prompt"] = v
+            else:
+                print("错误：不支持的网页 UI 配置键 %s（支持 ui.port / ui.prompt）" % k,
+                      file=sys.stderr)
+                return 2
         else:
             print("错误：不支持的配置键 %s（支持 path_style / storage_dir / editor.path / "
-                  "editor.label / editor.args / defaults.*）" % k, file=sys.stderr)
+                  "editor.label / editor.args / defaults.* / ui.port / ui.prompt）" % k, file=sys.stderr)
             return 2
     # 存储目录变更：旧目录还有待办时必须让用户显式二选一，不能悄悄改配置把数据落下
     storage_changed = bool(new_storage) and os.path.abspath(new_storage) != os.path.abspath(old_storage)
@@ -2432,6 +2466,8 @@ def cmd_env(args):
     print(json.dumps(_defaults_view(), ensure_ascii=False))
     print("周口径: 周一为起点（WEEK_START_ISO=%d）" % WEEK_START_ISO)
     print("生效的存储目录：%s" % _storage_dir())
+    print("网页 UI 服务：端口 %d；维护后检查并询问启动：%s（%s env --set ui.prompt=off 可关闭）"
+          % (_ui_port(), "开启" if _ui_prompt_enabled() else "关闭", _script_cmd()))
     st = editor_status()
     if st["available"]:
         print("生效的编辑器：%s（%s）" % (st["label"] or "已配置", st["path"]))
@@ -2446,6 +2482,148 @@ def cmd_env(args):
     elif env.get("_inferred"):
         print("（提示：环境配置尚未保存，可运行 `init` 命令识别并保存。）")
     return 0
+
+
+# ---- 网页 UI 服务：维护后检查与询问启动 -----------------------------------
+# 触发规则：AI（会话 / 大语言模式）或 CLI 成功「添加 / 维护」一条待办后，检查本地网页
+# 服务（web/server.py，默认 http://127.0.0.1:8796/）是否在运行；未运行时按 ui.prompt
+# 配置弹框询问用户是否启动 UI，用户选择启动则后台拉起服务并自动打开浏览器。
+# 关闭方式：env.json 的 ui.prompt=off，或临时环境变量 AWAM_TODO_UI_PROMPT=off（自测/CI 用）。
+
+
+def _ui_config():
+    """读取 env.json 的 ui 段（网页服务配置），缺失返回空 dict。"""
+    env = _load_env()
+    ui = env.get("ui")
+    return ui if isinstance(ui, dict) else {}
+
+
+def _ui_port():
+    """网页服务端口：env.json ui.port，缺省 8796（与 web/server.py 默认一致）。"""
+    try:
+        return int(_ui_config().get("port") or UI_DEFAULT_PORT)
+    except (TypeError, ValueError):
+        return UI_DEFAULT_PORT
+
+
+def _ui_prompt_enabled():
+    """维护后是否检查并询问启动网页 UI。环境变量可临时关闭（自测/CI）。"""
+    v = os.environ.get("AWAM_TODO_UI_PROMPT", "").strip().lower()
+    if v in ("off", "0", "no", "false"):
+        return False
+    if v in ("on", "1", "yes", "true"):
+        return True
+    v = str(_ui_config().get("prompt") or UI_PROMPT_MODE_DEFAULT).strip().lower()
+    return v not in ("off", "0", "no", "false")
+
+
+def _ui_url(port=None):
+    return "http://127.0.0.1:%d/" % (port or _ui_port())
+
+
+def _ui_server_running(port=None):
+    """探测本地网页服务是否已启动：根路径能返回响应即视为在运行（只读，不落盘）。"""
+    port = port or _ui_port()
+    try:
+        import urllib.request
+        with urllib.request.urlopen(_ui_url(port), timeout=1.0) as resp:
+            return resp.status < 500
+    except Exception:
+        return False
+
+
+def _ui_server_py():
+    """网页服务脚本路径：env.json 的 dirs.skill_dir 优先，其次按本文件位置推算。"""
+    env = _load_env()
+    skill_dir = (env.get("dirs") or {}).get("skill_dir") or SKILL_DIR
+    return os.path.join(skill_dir, "web", "server.py")
+
+
+def _start_ui_server(port=None, no_browser=False):
+    """后台拉起 web/server.py（默认会自动打开浏览器），轮询确认真的在监听。
+
+    no_browser=True 时不自动打开浏览器（测试用）。返回 True=已启动 / False=启动失败。"""
+    port = port or _ui_port()
+    server_py = _ui_server_py()
+    if not os.path.exists(server_py):
+        print("网页服务脚本不存在：%s" % server_py, file=sys.stderr)
+        return False
+    argv = [sys.executable, server_py]
+    if port != UI_DEFAULT_PORT:
+        argv += ["--port", str(port)]
+    if no_browser:
+        argv += ["--no-browser"]
+    kwargs = {"cwd": os.path.dirname(os.path.dirname(server_py)),
+              "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL,
+              "close_fds": True}
+    if os.name == "nt":
+        # 脱离进程组：不随调用方退出，也不占住调用方的管道
+        kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
+    try:
+        subprocess.Popen(argv, **kwargs)
+    except Exception as e:
+        print("启动网页服务失败：%s" % e, file=sys.stderr)
+        return False
+    # 轮询确认服务真的起来了（最多约 2 秒），避免「说启动了但端口没监听」
+    for _ in range(8):
+        if _ui_server_running(port):
+            return True
+        time.sleep(0.25)
+    return False
+
+
+def _ask_start_ui(port=None):
+    """弹系统对话框询问是否启动网页 UI。返回 True=启动 / False=不启动 / None=无法弹框。"""
+    port = port or _ui_port()
+    try:
+        import tkinter as tk
+        from tkinter import messagebox
+    except Exception:
+        return None
+    try:
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        ans = messagebox.askyesno(
+            "awam-todo 网页 UI",
+            "检测到本地网页 UI 未启动（%s）。\n是否现在启动？" % _ui_url(port))
+        root.destroy()
+        return bool(ans)
+    except Exception:
+        return None
+
+
+def _ui_prompt_needed(args):
+    """本次命令是否属于「添加 / 维护待办」成功后触发检查的范围（只读命令不触发）。"""
+    if args.cmd in UI_PROMPT_MUTATING_CMDS:
+        return True
+    if args.cmd == "dep":
+        # dep 不带任何改动参数时只是查看，不触发
+        return bool(args.deps or args.add or args.remove or args.clear)
+    return False
+
+
+def _maybe_ui_prompt(args):
+    """维护命令成功落盘后调用：检查本地网页服务，未启动时询问用户是否启动 UI。"""
+    if not _ui_prompt_needed(args) or not _ui_prompt_enabled():
+        return
+    port = _ui_port()
+    if _ui_server_running(port):
+        return  # 服务已在运行，不打扰
+    url = _ui_url(port)
+    manual = 'python "%s"' % _ui_server_py()
+    choice = _ask_start_ui(port)
+    if choice is None:
+        # 无法弹框（无图形环境等）：只提示，不阻塞命令
+        print("提示：本地网页 UI 未启动（%s），需要时可用命令启动：%s" % (url, manual))
+        return
+    if choice:
+        if _start_ui_server(port):
+            print("网页 UI 已启动：%s（浏览器将自动打开）" % url)
+        else:
+            print("网页 UI 启动失败，可手动启动：%s" % manual, file=sys.stderr)
+    else:
+        print("已跳过启动网页 UI（需要时可用命令启动：%s）" % manual)
 
 
 def main():
@@ -2572,7 +2750,11 @@ def main():
         "init": lambda a: cmd_init(a),
         "env": lambda a: cmd_env(a),
     }
-    return handlers[args.cmd](args)
+    code = handlers[args.cmd](args)
+    if code == 0:
+        # 添加 / 维护待办成功后：检查本地网页服务，未启动时询问用户是否启动 UI
+        _maybe_ui_prompt(args)
+    return code
 
 
 if __name__ == "__main__":

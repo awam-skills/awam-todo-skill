@@ -1,6 +1,6 @@
 ---
 name: awam-todo
-version: 0.4.0
+version: 0.5.0
 description: >-
   输入与管理 Awam 的 To-Do：在会话中解析用户自然语言里的待办内容、重要性、备注、工作空间目录、
   相关文档、链接与时间，调用脚本追加到按日期划分的存储文件，并自动维护索引（todo / in_progress /
@@ -18,6 +18,8 @@ description: >-
   支持**两条可配置能力**：存储目录（`env --set storage_dir`，旧目录有数据时必须显式选 `--migrate`
   搬迁或 `--no-migrate` 留原处，搬迁先复制、校验一致才删旧）与「用编辑器打开」的编辑器
   （`env --set editor.path`，`init` 自动探测，未配置/失效时报错并停用入口，不猜路径）。
+  支持**网页 UI 服务联动**：成功添加/维护待办后自动检查本地网页服务是否在运行，未启动时
+  弹框询问是否启动 UI（`ui.port` / `ui.prompt` 可配置）。
   当用户说“记一下/加个待办/帮我记/安排XX/提醒我X日做XX”或显式
   调用 /awam-todo 时使用；也用于列出、完成、标记进行中、重新打开、归档待办、设置依赖、管理子任务。
 ---
@@ -110,10 +112,10 @@ python ...\todo.py env --set path_style=posix --reformat-workspaces
 - `--reformat-workspaces`：把全部存储文件中的工作空间统一为当前 `path_style`（可配合改风格使用）。
 - 修改即写回 `env.json`；改风格后可重跑 `init` 或直接 `--reformat-workspaces` 让存量数据同步。
 
-## 两条可配置能力（技能必须知晓）
+## 三条可配置能力（技能必须知晓）
 
-本技能有**两个可配置项**，都存在 `env.json`，都能通过 `env --set` 修改。用户提到「换个地方存待办」
-「我用的不是 Cursor」「用 XX 编辑器打开」时，走这两条，不要改代码。
+本技能有**三个可配置项**，都存在 `env.json`，都能通过 `env --set` 修改。用户提到「换个地方存待办」
+「我用的不是 Cursor」「用 XX 编辑器打开」「网页端口」「别弹启动询问框」时，走这三条，不要改代码。
 
 ### 1. 存储目录 `storage_dir`
 
@@ -153,6 +155,8 @@ python ...\todo.py env --set editor.path="D:\Apps\Cursor\Cursor.exe"      # 绝�
 python ...\todo.py env --set editor.path=code                             # 或 PATH 里的命令名
 python ...\todo.py env --set editor.label="VS Code"
 python ...\todo.py env --set "editor.args=--new-window"
+python ...\todo.py env --set ui.port=9000          # 网页 UI 服务端口（默认 8796，见第 3 条）
+python ...\todo.py env --set ui.prompt=off         # 维护后不弹框询问启动网页 UI（见第 3 条）
 ```
 
 - `init` / `env --reset` 会**自动探测**常见编辑器（Cursor、VS Code、Trae、Windsurf、Sublime Text、Zed）。
@@ -162,6 +166,23 @@ python ...\todo.py env --set "editor.args=--new-window"
   「标记进行中」已完成，返回码仍为 0）；网页**不渲染**「用编辑器打开」菜单项。
   **不要**退化成「按软件名猜路径」或「静默用系统默认程序打开」。
 - 启动编辑器时会切断 stdio 并脱离进程组，避免编辑器占住调用方的管道。
+
+### 3. 网页 UI 服务 `ui`
+
+「添加 / 维护待办后自动检查本地网页服务并询问是否启动 UI」的开关与端口：
+
+| 键 | 说明 |
+|----|------|
+| `ui.port` | 网页服务端口，默认 `8796`（与 `web/server.py` 默认一致） |
+| `ui.prompt` | `ask`（默认）/ `off`。`ask`=维护成功后若服务未启动则**弹框询问**是否启动；`off`=不检查不询问 |
+
+```powershell
+python ...\todo.py env --set ui.port=9000          # 改端口（服务未启动时按此端口探测与拉起）
+python ...\todo.py env --set ui.prompt=off         # 关闭「维护后询问启动网页 UI」
+```
+
+- 临时关闭（自测 / CI / 脚本化调用）：设置环境变量 `AWAM_TODO_UI_PROMPT=off`，优先级高于 `env.json`。
+- 该配置只影响 `todo.py` 侧的检查与询问；网页服务本身的端口仍以启动参数为准（`server.py --port`）。
 
 ## 会话中解析（新增待办的核心步骤）
 
@@ -474,6 +495,15 @@ python "...\awam-todo\web\server.py" --no-browser # 只启动不打开浏览器
 ```
 
 - 服务常驻后台，浏览器访问 `http://127.0.0.1:8796/`。
+- **维护后自动检查与询问启动（LLM / CLI 通用）**：成功**添加 / 维护**一条待办后
+  （`add` / `add --update-id` / `done` / `start` / `work` / `reopen` / `postpone` /
+  `dep` 改动 / `deparent`），脚本会检查本地网页服务是否在运行——**未运行**时弹出对话框询问
+  「是否现在启动网页 UI」：用户选择启动则后台拉起 `web/server.py` 并自动打开浏览器；
+  选择不启动则跳过。服务已在运行时不做任何打扰。
+  - 关闭询问：`env --set ui.prompt=off`（临时关闭用环境变量 `AWAM_TODO_UI_PROMPT=off`）。
+  - Agent 注意：弹框由脚本直接弹出、用户点击后脚本自行拉起服务，Agent 只需按脚本输出
+    汇报结果；若脚本提示「无法弹框」（无图形环境），Agent 应在会话中向用户确认是否启动，
+    确认后运行 `server.py` 的启动命令。
 - 网页支持：列表展示与统计、按状态/标签筛选、关键词搜索、**增删改查**、状态流转（开始/完成/重开/待开始）、
   重复检测确认（相同/近似）、依赖链与子任务冲突确认（可强制推进）。
 - **视图**：`全部 / 今日 / 进行中 / 待开始 / 已结束 / 紧急 / 逾期`。

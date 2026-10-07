@@ -14,12 +14,17 @@ SRC = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 
 PY = sys.executable
 
 
-def run(tmp, *args, timeout=60):
-    """跑一条 CLI 命令。带超时保护：卡住的一律当成失败，不让自测整体挂死。"""
+def run(tmp, *args, timeout=60, env=None):
+    """跑一条 CLI 命令。带超时保护：卡住的一律当成失败，不让自测整体挂死。
+    默认注入 AWAM_TODO_UI_PROMPT=off：自测里不弹「是否启动网页 UI」的对话框。"""
+    e = dict(os.environ)
+    e.setdefault("AWAM_TODO_UI_PROMPT", "off")
+    if env:
+        e.update(env)
     try:
         r = subprocess.run([PY, os.path.join(tmp, "scripts", "todo.py")] + list(args),
                            capture_output=True, text=True, encoding="utf-8", errors="replace",
-                           timeout=timeout)
+                           timeout=timeout, env=e)
         return r.returncode, (r.stdout or "").strip(), (r.stderr or "").strip()
     except subprocess.TimeoutExpired:
         print("  FAIL  [超时 %ss] todo.py %s" % (timeout, " ".join(args)))
@@ -428,6 +433,33 @@ def main():
     check("--reset 退出码 0", rc == 0, (out or err)[:200])
     check("--reset 保留存储目录配置", store2 in out, out[:200])
     check("--reset 保留用户默认值配置", '"status"' in out, out[:200])
+
+    # ------------------------------------------------------------------
+    print("== 18. 网页 UI 服务配置（ui.port / ui.prompt）==")
+    rc, out, err = run(tmp, "env")
+    check("env 输出网页 UI 服务配置行", "网页 UI 服务" in out, (out or err)[:300])
+
+    rc, out, err = run(tmp, "env", "--set", "ui.port=9000")
+    check("ui.port 合法端口配置成功", rc == 0 and "9000" in out, (out or err)[:300])
+
+    rc, out, err = run(tmp, "env", "--set", "ui.port=abc")
+    check("ui.port 非法值被拒绝", rc == 2 and "端口" in err, (out + err)[:200])
+
+    rc, out, err = run(tmp, "env", "--set", "ui.port=99999")
+    check("ui.port 越界值被拒绝", rc == 2, (out + err)[:200])
+
+    rc, out, err = run(tmp, "env", "--set", "ui.prompt=off")
+    check("ui.prompt=off 配置成功", rc == 0, (out or err)[:200])
+
+    rc, out, err = run(tmp, "env", "--set", "ui.prompt=maybe")
+    check("ui.prompt 非法值被拒绝", rc == 2 and "ui.prompt" in err, (out + err)[:200])
+
+    rc, out, err = run(tmp, "env", "--set", "ui.foo=bar")
+    check("未知 ui 子键被拒绝", rc == 2 and "ui." in err, (out + err)[:200])
+
+    # 维护命令在 UI 检查关闭时正常返回（AWAM_TODO_UI_PROMPT=off 由 run() 默认注入）
+    rc, out, err = run(tmp, "add", "--text", "网页UI联调任务", "--force")
+    check("UI 检查关闭时 add 正常且不弹框", rc == 0 and "网页 UI" not in out, (out or err)[:200])
 
     # 通过就清掉临时目录；失败时留下现场，便于照着失败项翻文件排查。
     # 想强制清理（或强制保留）用环境变量 AWAM_TODO_KEEP_TMP=0 / 1。

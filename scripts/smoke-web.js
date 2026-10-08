@@ -199,6 +199,7 @@ function check(name, cond, extra) {
   check("卡片展示预案", /Blocker/.test(list) && /拿起手机前先做 10 分钟/.test(list));
   check("无推算时显示 N/A", /N\/A/.test(list));
   check("导航渲染含今日视图", /data-k="today"/.test(nav));
+  check("导航含设置入口", /data-k="settings"/.test(nav), nav.slice(0, 200));
   check("默认视图是全部(active)", /class="navitem active" data-k="all"/.test(nav), nav.slice(0, 160));
   check("默认视图不是今日入口", !/navitem active" data-k="today"/.test(nav));
   check("默认语言为英文", /Advance now/.test(list) && !/立即推进/.test(list));
@@ -206,6 +207,17 @@ function check(name, cond, extra) {
   check("底部新建入口文案(英文)", /New todo \(click here too\)/.test(els["newEntryBottom"].innerHTML || ""));
   check("图标为内联 svg", /<svg class="ic/.test(list));
   check("无 emoji 输出", !/[\u{1F300}-\u{1FAFF}]/u.test(list));
+
+  // ---------- 设置页：捕获服务（快捷键 / 分诊类型 / 试用分诊） ----------
+  global.__setState("settings"); global.__render();
+  const setHtml = els["list"].innerHTML || "";
+  check("设置页渲染捕获服务卡片", /Capture service/.test(setHtml), setHtml.slice(0, 200));
+  check("设置页含快捷键输入框", /id="set_cap_hotkey"/.test(setHtml));
+  check("设置页含启用开关", /id="set_cap_enabled"/.test(setHtml));
+  check("设置页含分诊类型开关", /id="set_type_add"/.test(setHtml) && /id="set_type_delete"/.test(setHtml));
+  check("设置页含试用分诊", /id="triageTryText"/.test(setHtml));
+  global.__setState("all"); global.__render();
+  check("从设置页切回列表正常", (els["list"].innerHTML.match(/class="card/g) || []).length === 3);
 
   // 切到「今日」视图
   global.__setState("today"); global.__render();

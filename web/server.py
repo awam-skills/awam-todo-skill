@@ -76,6 +76,15 @@ WEB_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(SKILL_DIR, "scripts"))
 import todo  # noqa: E402  复用 todo.py 的解析/校验/索引逻辑
 
+# 捕获服务（全局快捷键读剪贴板 -> 分诊 -> 弹框确认/执行）融合在本服务进程中。
+# 模块缺失（非 Windows / 无 tkinter）时优雅降级，服务照常提供网页。
+try:
+    import capture  # noqa: E402
+    _CAPTURE_IMPORT_ERR = None
+except Exception as e:  # noqa: BLE001
+    capture = None
+    _CAPTURE_IMPORT_ERR = e
+
 # 状态枚举（与 todo.py 一致）
 STATUSES = ["进行中", "待开始", "结束", "维护", "其他"]
 IMPORTANCES = ["重要", "不重要"]
@@ -392,6 +401,71 @@ def _open_editor(path):
     return True, "Opened with %s" % label
 
 
+# ---- 捕获服务（融合进本服务进程；配置见 env.json 的 capture 段） ----
+_capture_listener = None
+_capture_cfg = {}
+_capture_status_detail = ""
+
+
+def _capture_service_status():
+    """当前捕获服务状态（供设置页展示）。"""
+    st = {"state": "stopped", "message": _capture_status_detail or ""}
+    if _capture_listener is not None and _capture_listener.thread.is_alive():
+        st["state"] = "running"
+    return st
+
+
+def _on_hotkey():
+    try:
+        capture.capture_flow(_capture_cfg)
+    except Exception as e:  # noqa: BLE001
+        capture.show_toast("awam-todo", "Capture error: %s" % e)
+
+
+def _on_hotkey_error(msg):
+    global _capture_status_detail
+    _capture_status_detail = msg
+    capture.show_toast("awam-todo", msg)
+
+
+def _stop_capture():
+    global _capture_listener, _capture_status_detail
+    if _capture_listener is not None:
+        try:
+            _capture_listener.stop()
+        except Exception:  # noqa: BLE001
+            pass
+        _capture_listener = None
+    _capture_status_detail = ""
+
+
+def _start_capture(cfg):
+    """按配置启动捕获服务（重启热键）。返回 (ok, message)。"""
+    global _capture_listener, _capture_cfg, _capture_status_detail
+    _stop_capture()
+    if not cfg.get("enabled"):
+        _capture_status_detail = "disabled by settings"
+        return True, "capture disabled"
+    if os.name != "nt":
+        _capture_status_detail = "Windows only"
+        return False, "capture requires Windows"
+    if capture is None:
+        _capture_status_detail = "module unavailable: %s" % _CAPTURE_IMPORT_ERR
+        return False, "capture module unavailable"
+    if not capture.tk_available():
+        _capture_status_detail = "no GUI (tkinter unavailable)"
+        return False, "no GUI available (tkinter not importable)"
+    mods, vk = todo._hotkey_parse(cfg.get("hotkey") or "")
+    if mods is None:
+        _capture_status_detail = vk
+        return False, vk
+    _capture_cfg = cfg
+    _capture_listener = capture.HotkeyListener(mods, vk, _on_hotkey, _on_hotkey_error)
+    _capture_listener.start()
+    _capture_status_detail = ""
+    return True, "listening: %s" % todo._hotkey_format(mods, vk)
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "awam-todo/0.1"
 
@@ -451,6 +525,8 @@ class Handler(BaseHTTPRequestHandler):
         qs = parse_qs(parsed.query)
         if path == "/api/todos":
             self._api_list(qs)
+        elif path == "/api/settings":
+            self._api_settings()
         elif path.startswith("/api/todos/"):
             self._api_get(path[len("/api/todos/"):])
         else:
@@ -462,6 +538,8 @@ class Handler(BaseHTTPRequestHandler):
             self._api_create(self._read_body())
         elif path == "/api/todos/apply-patches":
             self._api_apply_patches(self._read_body())
+        elif path == "/api/capture/triage":
+            self._api_capture_triage(self._read_body())
         elif path == "/api/workspace/open":
             self._api_workspace_open(self._read_body())
         elif path in ("/api/workspace/editor", "/api/workspace/cursor"):
@@ -472,7 +550,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_PUT(self):
         path = urlparse(self.path).path
-        if path.startswith("/api/todos/"):
+        if path == "/api/settings":
+            self._api_settings_update(self._read_body())
+        elif path.startswith("/api/todos/"):
             self._api_update(path[len("/api/todos/"):], self._read_body())
         else:
             self._json(404, {"error": "not found"})
@@ -611,39 +691,10 @@ class Handler(BaseHTTPRequestHandler):
         self._json(200, _task_view(date, t, now))
 
     def _api_delete(self, tid):
-        date, data, t = todo._find_task(tid)
-        if t is None:
+        if todo._find_task(tid)[2] is None:
             self._json(404, {"error": "Task not found: %s" % tid})
             return
-        now = dt.datetime.now()
-        data["tasks"] = [x for x in data["tasks"] if x.get("id") != tid]
-        if data["tasks"]:
-            all_done = all(x["status"] == "结束" for x in data["tasks"])
-            data["archived"] = all_done
-            todo.save_file(date, data["archived"], data["tasks"])
-        else:
-            # 清空后不产生归档空文件：尝试删除文件；删除不可用（如沙箱覆盖层）则写 归档:false 空文件
-            try:
-                os.remove(todo._file_path(date))
-            except OSError:
-                data["archived"] = False
-                todo.save_file(date, False, data["tasks"])
-        for d2, d2data in todo._scan_files().items():
-            changed = False
-            for x in d2data["tasks"]:
-                if tid in (x.get("depends_on") or []):
-                    x["depends_on"] = [d for d in x.get("depends_on") if d != tid]
-                    x["updated"] = todo._fmt(now)
-                    changed = True
-                if (x.get("parent") or "") == tid:
-                    x["parent"] = ""
-                    x["updated"] = todo._fmt(now)
-                    changed = True
-            if changed:
-                d2_all = all(y["status"] == "结束" for y in d2data["tasks"])
-                d2data["archived"] = d2_all
-                todo.save_file(d2, d2data["archived"], d2data["tasks"])
-        todo.build_index(now)
+        rc = todo._delete_task(tid, dt.datetime.now(), quiet=True)
         self._json(200, {"deleted": tid})
 
     def _api_apply_patches(self, body):
@@ -823,6 +874,52 @@ class Handler(BaseHTTPRequestHandler):
             "revision": _revision(),
         })
 
+    # ---- 设置（捕获服务配置：快捷键 / 分诊类型 / 开关） ----
+    def _api_settings(self):
+        cfg = todo._capture_view()
+        st = _capture_service_status()
+        self._json(200, {"capture": cfg, "service": st})
+
+    def _api_settings_update(self, body):
+        cap = body.get("capture")
+        if not isinstance(cap, dict):
+            self._json(400, {"error": "capture must be an object"})
+            return
+        env = todo._load_env()
+        cur = env.setdefault("capture", {})
+        if "enabled" in cap:
+            cur["enabled"] = bool(cap["enabled"])
+        if "hotkey" in cap:
+            mods, err = todo._hotkey_parse(cap["hotkey"])
+            if mods is None:
+                self._json(400, {"error": err})
+                return
+            cur["hotkey"] = str(cap["hotkey"]).strip()
+        if "confirm_delete" in cap:
+            cur["confirm_delete"] = bool(cap["confirm_delete"])
+        if "toast" in cap:
+            cur["toast"] = bool(cap["toast"])
+        if isinstance(cap.get("triage_types"), dict):
+            tt = cur.setdefault("triage_types", {})
+            for a in todo.TRIAGE_TYPES_ALL:
+                if a in cap["triage_types"]:
+                    tt[a] = bool(cap["triage_types"][a])
+        env["updated"] = todo._fmt(dt.datetime.now())
+        todo._save_env(env)
+        ok, msg = _start_capture(todo._capture_config())
+        self._json(200, {"capture": todo._capture_view(), "service": _capture_service_status(),
+                         "ok": ok, "message": msg})
+
+    def _api_capture_triage(self, body):
+        text = _norm(body.get("text"))
+        if not text:
+            self._json(400, {"error": "text must not be empty"})
+            return
+        proposal = todo.triage_text(text)
+        if capture is not None:
+            proposal = capture.apply_config_filters(proposal, todo._capture_config())
+        self._json(200, proposal)
+
     def _api_workspace_open(self, body):
         ok, msg = _open_dir(_norm(body.get("path")))
         self._json(200 if ok else 400, {"ok": ok, "message": msg})
@@ -878,6 +975,10 @@ def main():
     url = "http://%s:%d/" % (args.host, args.port)
     print("awam-todo web server started: %s" % url)
     print("Press Ctrl+C to stop.")
+
+    # 捕获服务（全局快捷键 -> 剪贴板 -> 分诊）随 UI 服务一起启动
+    _ok, _msg = _start_capture(todo._capture_config())
+    print("Capture service: %s" % _msg)
 
     if not args.no_browser:
         threading.Timer(0.6, lambda: webbrowser.open(url)).start()

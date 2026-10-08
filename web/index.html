@@ -291,7 +291,7 @@
     <div class="stats" id="stats"></div>
     <div class="weekbar" id="weekbar"></div>
 
-    <div class="toolbar">
+    <div class="toolbar" id="toolbar">
       <select id="tagFilter" class="mini-select" onchange="onTagFilter(this.value)" title="按标签过滤">
         <option value="">全部标签</option>
       </select>
@@ -500,7 +500,21 @@ const I18N = {
     lbl_deps:"Dependencies (task IDs)", lbl_parent:"Parent (task ID)", ph_parent:"Parent task ID",
     hint_title:"Notice",
     tab_all:"All", tab_today:"Today", tab_inprogress:"In progress", tab_todo:"Not started",
-    tab_done:"Done", tab_urgent:"Urgent", tab_overdue:"Overdue"
+    tab_done:"Done", tab_urgent:"Urgent", tab_overdue:"Overdue",
+    settings_nav:"Settings", settings_title:"Settings",
+    cap_enabled:"Capture service: global hotkey reads clipboard → triage → confirm/execute",
+    cap_enabled_on:"Enable capture service",
+    cap_hotkey:"Hotkey", cap_hotkey_hint:"Ctrl / Alt / Shift / Win + F1–F24, letters, digits, Space, Enter, Tab, Esc",
+    cap_confirm_delete:"Confirm before deleting (destructive)",
+    cap_toast:"Show a corner toast after each capture",
+    cap_types:"Triage actions (disabled ones always ask and fall back to Add)",
+    cap_type_add:"Add", cap_type_update:"Update", cap_type_delete:"Delete", cap_type_status:"Change status",
+    cap_save:"Save settings", cap_saved:"Capture settings saved and applied",
+    cap_state_running:"Service running — listening {k}", cap_state_stopped:"Service stopped",
+    cap_apply_now:"Changes take effect immediately",
+    cap_try:"Try triage (read-only)", cap_try_ph:"Paste a sentence here and see how it is triaged…",
+    cap_try_note:"Read-only preview; nothing is written or executed",
+    cap_try_empty:"Please enter some text first"
   },
   zh: {
     app_title:"Awam Todo 看板", sub:"本地暂存 + 延迟保存",
@@ -576,7 +590,21 @@ const I18N = {
     lbl_deps:"前置依赖 (任务ID)", lbl_parent:"父任务 (任务ID)", ph_parent:"归属主任务 ID",
     hint_title:"提示",
     tab_all:"全部", tab_today:"今日", tab_inprogress:"进行中", tab_todo:"待开始",
-    tab_done:"已结束", tab_urgent:"紧急", tab_overdue:"逾期"
+    tab_done:"已结束", tab_urgent:"紧急", tab_overdue:"逾期",
+    settings_nav:"设置", settings_title:"设置",
+    cap_enabled:"捕获服务：全局快捷键读取剪贴板 → 分诊 → 确认 / 执行",
+    cap_enabled_on:"启用捕获服务",
+    cap_hotkey:"快捷键", cap_hotkey_hint:"Ctrl / Alt / Shift / Win + F1–F24、字母、数字、Space、Enter、Tab、Esc",
+    cap_confirm_delete:"删除前需要确认（破坏性操作）",
+    cap_toast:"每次捕获后在屏幕角落显示结果提示",
+    cap_types:"分诊类型（被禁用的动作一律先询问，并回落为「新增」）",
+    cap_type_add:"新增", cap_type_update:"更新", cap_type_delete:"删除", cap_type_status:"修改状态",
+    cap_save:"保存设置", cap_saved:"捕获设置已保存并生效",
+    cap_state_running:"服务运行中 —— 监听 {k}", cap_state_stopped:"服务未运行",
+    cap_apply_now:"保存后立即生效",
+    cap_try:"试用分诊（只读）", cap_try_ph:"粘贴一句话，看看它会被如何分诊…",
+    cap_try_note:"只读演示，不会写入或执行",
+    cap_try_empty:"请先输入文本"
   }
 };
 
@@ -698,7 +726,8 @@ const P = {
   flag:'<path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><path d="M4 22v-7"/>',
   inboxEmpty:'<path d="M3 12h5l2 3h4l2-3h5"/><path d="M5 5h14l2 7v7H3v-7z"/><path d="M9 15h6"/>',
   cursor:'<path d="M4 3l7 17 2.5-7.5L21 10 4 3z"/>',
-  copy:'<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>'
+  copy:'<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>',
+  gear:'<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 110-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 114 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 110 4h-.09a1.65 1.65 0 00-1.51 1z"/>'
 };
 function ic(name, cls){
   return '<svg class="ic' + (cls ? " " + cls : "") + '" viewBox="0 0 24 24" aria-hidden="true">' + (P[name] || "") + '</svg>';
@@ -729,6 +758,7 @@ const store = {
   // 编辑器配置来自后端 todo.py 的 env.json（可用性决定是否渲染「用编辑器打开」）
   editor: { configured:false, available:false, label:null, path:null, error:null },
   storageDir: null,
+  settings: null,
 };
 
 function $(id){ return document.getElementById(id); }
@@ -817,7 +847,15 @@ function maybeRestorePending(){
 
 // ---------- 渲染 ----------
 function render(){
-  renderStats(); renderWeek(); renderNav(); renderTagFilter(); renderList(); updateSaveBtn();
+  const inSettings = currentState === "settings";
+  $("stats").style.display = inSettings ? "none" : "";
+  $("weekbar").style.display = inSettings ? "none" : "";
+  $("toolbar").style.display = inSettings ? "none" : "";
+  $("newEntryBottom").style.display = inSettings ? "none" : "";
+  $("empty").style.display = "none";
+  renderNav();
+  if (inSettings){ renderSettings(); return; }
+  renderStats(); renderWeek(); renderTagFilter(); renderList(); updateSaveBtn();
   const pending = store.patches.length;
   $("genTime").textContent = tr("gen_n", {n: store.items.length}) + " · " +
     (pending ? tr("gen_pending", {n: pending}) : tr("gen_synced"));
@@ -872,7 +910,11 @@ function renderNav(){
     '<button class="navitem' + (tab.k === currentState ? " active" : "") + '" data-k="' + esc(tab.k) + '">' +
       ic(tab.icon, "sm") + '<span>' + esc(tr(tab.key)) + '</span>' +
       '<span class="n">' + (counts[tab.k] !== undefined ? counts[tab.k] : 0) + '</span>' +
-    '</button>').join("");
+    '</button>').join("") +
+    // 设置入口：独立于视图 Tab，渲染进同一份导航（侧栏 / 顶部 / 底部）
+    '<button class="navitem' + (currentState === "settings" ? " active" : "") + '" data-k="settings">' +
+      ic("gear", "sm") + '<span>' + esc(tr("settings_nav")) + '</span>' +
+    '</button>';
   ["navSide","navTop","navBottom"].forEach(id => { const el = $(id); if (el) el.innerHTML = html; });
   document.querySelectorAll(".navitem").forEach(b=>{
     b.addEventListener("click", ()=>{ currentState = b.getAttribute("data-k"); render(); });
@@ -887,6 +929,107 @@ function renderTagFilter(){
     '<option value="'+esc(tg)+'">#'+esc(tg)+' ('+tagCounts[tg]+')</option>').join("");
   const cur = currentTag;
   ["tagFilter","tagFilterSide"].forEach(id=>{ const el=$(id); if(el){ el.innerHTML = opts; el.value = cur; } });
+}
+
+// ---------- 设置页（捕获服务：快捷键 / 分诊类型 / 开关） ----------
+// store.settings = { capture: {...}, service: {state, message} }，来自 GET /api/settings
+async function loadSettings(){
+  const r = await api("/api/settings");
+  if (r.ok) store.settings = r.data;
+  else store.settings = { capture: null, service: { state:"stopped", message: tr("load_fail") } };
+  if (currentState === "settings") render();
+}
+
+function renderSettings(){
+  if (!store.settings){ $("list").innerHTML = '<div class="empty">' + esc(tr("load_fail")) + '</div>'; loadSettings(); return; }
+  const c = store.settings.capture || {};
+  const s = store.settings.service || {};
+  const types = c.triage_types || {};
+  const state = s.state === "running";
+  const stateMsg = s.message || "";
+  const typeRow = ["add","update","delete","status"].map(a =>
+    '<label style="display:flex;align-items:center;gap:6px;font-size:13px">' +
+      '<input type="checkbox" id="set_type_'+a+'"' + (types[a] !== false ? " checked" : "") + '> ' +
+      esc(tr("cap_type_"+a)) + '</label>').join("");
+  const html =
+    '<div style="max-width:640px">' +
+      '<h2 style="font-size:17px;margin:2px 0 12px;display:flex;align-items:center;gap:8px">' +
+        ic("gear","sm") + esc(tr("settings_title")) + '</h2>' +
+      '<div class="card" style="flex-direction:column;align-items:stretch">' +
+        '<div class="row1" style="font-weight:600">' + esc(tr("cap_enabled")) + '</div>' +
+        '<div style="margin:10px 0 2px;display:flex;flex-direction:column;gap:9px;font-size:13px">' +
+          '<label style="display:flex;align-items:center;gap:8px;cursor:pointer">' +
+            '<input type="checkbox" id="set_cap_enabled"' + (c.enabled !== false ? " checked" : "") + '> ' +
+            esc(tr("cap_enabled_on")) + '</label>' +
+          '<label style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;cursor:pointer">' +
+            '<span>' + esc(tr("cap_hotkey")) + '</span>' +
+            '<input id="set_cap_hotkey" value="' + esc(c.hotkey || "Ctrl+Alt+T") + '"' +
+              ' style="flex:1;min-width:170px;max-width:240px;padding:7px 9px;border:1px solid var(--line);border-radius:8px;font-family:Consolas,monospace;font-size:13px">' +
+            '<span class="hint">' + esc(tr("cap_hotkey_hint")) + '</span></label>' +
+          '<label style="display:flex;align-items:center;gap:8px;cursor:pointer">' +
+            '<input type="checkbox" id="set_cap_confirm"' + (c.confirm_delete !== false ? " checked" : "") + '> ' +
+            esc(tr("cap_confirm_delete")) + '</label>' +
+          '<label style="display:flex;align-items:center;gap:8px;cursor:pointer">' +
+            '<input type="checkbox" id="set_cap_toast"' + (c.toast !== false ? " checked" : "") + '> ' +
+            esc(tr("cap_toast")) + '</label>' +
+        '</div>' +
+        '<div style="margin:12px 0 2px;font-size:13px;font-weight:600">' + esc(tr("cap_types")) + '</div>' +
+        '<div style="display:flex;flex-wrap:wrap;gap:8px 18px;margin:6px 0">' + typeRow + '</div>' +
+        '<div style="margin:6px 0 2px;font-size:13px">' +
+          (state
+            ? '<span style="color:var(--ok);display:inline-flex;align-items:center;gap:6px">' +
+                ic("check","sm") + esc(tr("cap_state_running", {k: c.hotkey || ""})) + '</span>'
+            : '<span style="color:var(--grace);display:inline-flex;align-items:center;gap:6px">' +
+                ic("alert","sm") + esc(tr("cap_state_stopped")) +
+                (stateMsg ? " — " + esc(stateMsg) : "") + '</span>') +
+        '</div>' +
+        '<div class="modal-foot" style="margin-top:14px">' +
+          '<span class="hint" style="align-self:center;margin-right:auto">' + esc(tr("cap_apply_now")) + '</span>' +
+          '<button class="btn btn-primary" onclick="saveCaptureSettings()">' + ic("save","sm") + esc(tr("cap_save")) + '</button>' +
+        '</div>' +
+      '</div>' +
+      '<div class="card" style="flex-direction:column;align-items:stretch;margin-top:12px">' +
+        '<div class="row1" style="font-weight:600">' + esc(tr("cap_try")) + '</div>' +
+        '<textarea id="triageTryText" rows="2" style="margin:10px 0 8px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;font-family:inherit;font-size:13px" placeholder="' + esc(tr("cap_try_ph")) + '"></textarea>' +
+        '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">' +
+          '<button class="btn btn-primary" onclick="tryTriage()">' + ic("zap","sm") + esc(tr("cap_try")) + '</button>' +
+          '<span class="hint">' + esc(tr("cap_try_note")) + '</span>' +
+        '</div>' +
+        '<pre id="triageTryOut" style="display:none;margin-top:10px;padding:10px;background:#f8fafc;border:1px solid var(--line);border-radius:8px;font-size:12px;white-space:pre-wrap;word-break:break-all;max-height:260px;overflow:auto"></pre>' +
+      '</div>' +
+    '</div>';
+  $("list").innerHTML = html;
+}
+
+async function saveCaptureSettings(){
+  const cap = {
+    enabled: $("set_cap_enabled").checked,
+    hotkey: ($("set_cap_hotkey").value || "").trim() || "Ctrl+Alt+T",
+    confirm_delete: $("set_cap_confirm").checked,
+    toast: $("set_cap_toast").checked,
+    triage_types: {
+      add: $("set_type_add").checked,
+      update: $("set_type_update").checked,
+      delete: $("set_type_delete").checked,
+      status: $("set_type_status").checked
+    }
+  };
+  const r = await api("/api/settings", "PUT", { capture: cap });
+  if (!r.ok){ toast(tr("op_fail") + ": " + ((r.data && r.data.error) || r.status), true); return; }
+  store.settings = r.data;
+  toast(tr("cap_saved"));
+  renderSettings();
+}
+
+async function tryTriage(){
+  const text = $("triageTryText").value;
+  const out = $("triageTryOut");
+  if (!(text || "").trim()){ toast(tr("cap_try_empty"), true); return; }
+  const r = await api("/api/capture/triage", "POST", { text: text.trim() });
+  out.style.display = "block";
+  out.textContent = r.ok
+    ? JSON.stringify(r.data, null, 2)
+    : (tr("op_fail") + ": " + ((r.data && r.data.error) || r.status));
 }
 
 function sortItems(items){
@@ -1533,6 +1676,7 @@ $("newEntryBottom").innerHTML = ic("plus","lg") + esc(tr("new_todo_bottom"));
 applyLang();
 setupAutosave();
 loadData(true);
+loadSettings();
 </script>
 </body>
 </html>

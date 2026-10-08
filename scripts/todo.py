@@ -1709,6 +1709,348 @@ def cmd_check(args):
     return EXIT_NEEDS_CONFIRM if hits else 0
 
 
+# ---- 分诊（triage）：给一段话判定该「添加 / 更新 / 删除 / 修改状态」 -----------------
+# 纯规则、确定性的初判；拿不准就 need_confirm=True（CLI 退出码 3），由会话或系统弹框
+# 让用户确认。分诊只提议，绝不落盘；真正执行走 add / update / status / delete。
+# 设计目标：剪贴板内容原样当作任务内容（text 恒为原文），时间/重要/紧急/路径等作为
+# 附带字段解析出来，供添加或更新时预填。
+
+_TRIAGE_ID_RE = re.compile(r"T-\d{8}-\d{3}")
+_TRIAGE_WS_RE = re.compile(
+    r"(?:[A-Za-z]:\\[^\s，。；;）)\]]+)|(?:\/(?:[A-Za-z0-9_.\-]+\/)+[A-Za-z0-9_.\-]+)")
+_TRIAGE_TIME_RE = re.compile(
+    r"(?:下(?:周|星期)[一二三四五六日天七]|(?:周|星期)[一二三四五六日天七]|"
+    r"今天|今日|明天|明日|后天|昨天|昨日|\d{1,2}月\d{1,2}日|\d{4}-\d{2}-\d{2}|"
+    r"\d+天(?:后)?|\d{1,2}[:：]\d{2}|\d{1,2}点(?:半)?)")
+_TRIAGE_Q_RE = re.compile(r"[？?]$|(吗|呢|怎么样|如何|是不是|有没有|哪|谁|什么)$")
+_TRIAGE_HELPER_RE = re.compile(r"^(需要|要|得|必须|应该|记得|请|帮我)")
+_TRIAGE_LEAD_RE = re.compile(r"^(?:把|将|给|请)")
+
+TRIAGE_DELETE_VERBS = ("删除", "删掉", "移除", "去掉", "清除", "删了", "删", "delete", "remove", "rm")
+TRIAGE_UPDATE_VERBS = ("修改", "更新", "改为", "改成", "改到", "推迟", "延后", "提前", "换成",
+                       "调整", "改期", "reschedule", "postpone", "update", "change", "modify", "edit")
+TRIAGE_STATUS_GROUPS = (
+    ("结束", ("完成", "做完", "搞定", "收尾", "结束", "标记完成", "标为完成", "finish", "complete", "done")),
+    ("进行中", ("开始", "推进", "继续", "进行中", "start", "begin")),
+    ("待开始", ("待开始", "还没做", "重新打开", "恢复", "reopen")),
+    ("维护", ("暂停", "挂起", "维护")),
+)
+TRIAGE_TARGET_MIN = 0.55   # 达到该相似度才算「指代已锁定」
+TRIAGE_CANDIDATE_MIN = 0.30  # 达到该相似度才进候选列表（供用户挑选）
+
+# 捕获服务配置（env.json 的 capture 段；合并默认值后返回）
+CAPTURE_DEFAULTS = {
+    "enabled": True,
+    "hotkey": "Ctrl+Alt+T",
+    "triage_types": {"add": True, "update": True, "delete": True, "status": True},
+    "confirm_delete": True,
+    "toast": True,
+}
+TRIAGE_TYPES_ALL = ("add", "update", "delete", "status")
+HOTKEY_MODS = {"ctrl": 0x0002, "alt": 0x0001, "shift": 0x0004, "win": 0x0008}
+_HOTKEY_ALIAS = {"control": "ctrl", "cmd": "win", "meta": "win", "windows": "win", "super": "win"}
+
+
+def _str_to_bool(v):
+    return str(v).strip().lower() in ("1", "true", "yes", "on", "开", "是")
+
+
+def _hotkey_parse(expr):
+    """把 "Ctrl+Alt+T" 解析为 (mods, vk)；非法返回 (None, 错误信息)。纯函数，平台无关。"""
+    expr = _norm(expr or "")
+    if not expr:
+        return None, "hotkey must not be empty"
+    parts = [p.strip().lower() for p in expr.split("+") if p.strip()]
+    if not parts:
+        return None, "hotkey must not be empty"
+    mods = 0
+    key = parts[-1]
+    for m in parts[:-1]:
+        m = _HOTKEY_ALIAS.get(m, m)
+        if m not in HOTKEY_MODS:
+            return None, "unknown modifier: %s (supported: Ctrl / Alt / Shift / Win)" % m
+        mods |= HOTKEY_MODS[m]
+    if mods == 0:
+        return None, "hotkey needs at least one modifier (Ctrl / Alt / Shift / Win)"
+    ku = key.upper()
+    if re.fullmatch(r"F(?:[1-9]|1[0-9]|2[0-4])", ku):
+        vk = 0x70 + int(ku[1:]) - 1
+    elif re.fullmatch(r"[0-9A-Z]", ku):
+        vk = ord(ku)
+    elif key in ("space", "空格"):
+        vk = 0x20
+    elif key in ("enter", "回车"):
+        vk = 0x0D
+    elif key == "tab":
+        vk = 0x09
+    elif key in ("esc", "escape"):
+        vk = 0x1B
+    else:
+        return None, "unsupported key: %s (use a letter, digit, F1-F24, Space, Enter, Tab, Esc)" % key
+    return mods, vk
+
+
+def _hotkey_format(mods, vk):
+    """把 (mods, vk) 还原为可读组合，供展示。"""
+    names = [n.capitalize() for n, bit in HOTKEY_MODS.items() if mods & bit]
+    if 0x30 <= vk <= 0x5A:
+        key = chr(vk)
+    elif 0x70 <= vk <= 0x87:
+        key = "F%d" % (vk - 0x70 + 1)
+    elif vk == 0x20:
+        key = "Space"
+    elif vk == 0x0D:
+        key = "Enter"
+    elif vk == 0x09:
+        key = "Tab"
+    elif vk == 0x1B:
+        key = "Esc"
+    else:
+        key = hex(vk)
+    return "+".join(names + [key])
+
+
+def _capture_config():
+    """读取 env.json 的 capture 段并合并默认值（非法值回退默认）。"""
+    env = _load_env()
+    cap = env.get("capture")
+    if not isinstance(cap, dict):
+        cap = {}
+    out = {}
+    for k, dv in CAPTURE_DEFAULTS.items():
+        v = cap.get(k, dv)
+        if k == "triage_types":
+            if not isinstance(v, dict):
+                v = dict(dv)
+            out[k] = {a: bool(v.get(a, dv.get(a, True))) for a in TRIAGE_TYPES_ALL}
+        elif k in ("enabled", "confirm_delete", "toast"):
+            out[k] = bool(v)
+        else:
+            out[k] = _norm(v) or dv
+    return out
+
+
+def _capture_view():
+    """给 env 输出与网页设置页用的完整视图：合并默认值 + 快捷键合法性说明。"""
+    cfg = _capture_config()
+    mods, err = _hotkey_parse(cfg.get("hotkey"))
+    cfg["hotkey_valid"] = mods is not None
+    cfg["hotkey_error"] = None if mods is not None else err
+    return cfg
+
+
+def _extract_due_token(text):
+    """从文本中挑出一个 parse_due 能解析的时间短语；解析不了返回 None。
+    优先尝试「相对日期 + 时间」组合（如 明天 10:00、周五 09:00）。"""
+    for m in _TRIAGE_TIME_RE.finditer(text):
+        for end in range(m.end(), min(m.end() + 10, len(text) + 1)):
+            cand = _norm(text[m.start():end])
+            if parse_due(cand):
+                return cand
+        if parse_due(m.group(0)):
+            return m.group(0)
+    return None
+
+
+def _triage_fields(text, now):
+    """从原文解析附带字段（只做预填建议；全部可选，不猜）。"""
+    f = {}
+    tok = _extract_due_token(text)
+    if tok:
+        f["due"] = tok
+    if "重要" in text:
+        f["importance"] = "重要"
+    if any(w in text for w in ("紧急", "加急", "尽快", "马上", "立刻")):
+        f["urgent"] = "紧急"
+    m = re.search(r"(?:备注|note)\s*[:：]\s*(.+)$", text)
+    if m:
+        f["note"] = _norm(m.group(1))
+    m = re.search(r"(?:标签|tag)\s*[:：]\s*([^\n]+)$", text)
+    if m:
+        f["tags"] = [x.strip() for x in re.split(r"[;；、,，]", m.group(1)) if x.strip()]
+    m = _TRIAGE_WS_RE.search(text)
+    if m:
+        f["workspace"] = _norm_path(m.group(0).rstrip("，。；;"))
+    return f
+
+
+def _triage_subject(text, action, status):
+    """把指代主体从原文里抠出来（用于匹配已有任务）。启发式，拿不准就返回整句。"""
+    s = _norm(text)
+    s = _TRIAGE_ID_RE.sub("", s)
+    s = _TRIAGE_LEAD_RE.sub("", s)
+    if action == "delete":
+        for v in TRIAGE_DELETE_VERBS:
+            if v in s:
+                s = s.split(v, 1)[-1]
+                break
+    elif action == "status":
+        for st, words in TRIAGE_STATUS_GROUPS:
+            if st != status:
+                continue
+            for w in words:
+                if w in s:
+                    before, _, after = s.partition(w)
+                    if before and not re.fullmatch(r"[\s，。；、,:：]*", before):
+                        s = before
+                    else:
+                        s = after
+                    break
+            break
+        # 把X标记为完成 → 去掉「标记为/标为/设为」等连接词尾巴
+        s = re.split(r"(?:标记(?:为|成)?|标为|设为|变为|改成)", s)[0]
+    else:  # update
+        for kw in ("改为", "改成", "改到", "推迟到", "延后到", "提前到", "换成", "调整为", "改期到", "更新为"):
+            if kw in s:
+                s = s.split(kw, 1)[0]
+                break
+        else:
+            for v in TRIAGE_UPDATE_VERBS:
+                if v in s:
+                    before, _, after = s.partition(v)
+                    if before and not re.fullmatch(r"[\s，。；、,:：]*", before):
+                        s = before
+                    break
+    s = re.sub(r"^(?:这个|那个|这条|该|把|将|给)", "", s)
+    return _norm(s)
+
+
+def _resolve_triage_target(tid, subject):
+    """锁定目标任务。返回 (best, candidates)；best=None 表示没锁住。
+    优先未结束任务；candidates 是相似度达到候选门槛的列表（供弹框挑选）。"""
+    if tid:
+        date, _, t = _find_task(tid)
+        if t:
+            return {"id": t["id"], "text": t["text"], "score": 1.0, "kind": "id"}, []
+        return None, []
+    if not subject:
+        return None, []
+
+    def scan(only_open):
+        best, cands = None, []
+        for date, data in _scan_files().items():
+            for t in data["tasks"]:
+                if only_open and t.get("status") == "结束":
+                    continue
+                score = _text_similarity(subject, t.get("text") or "")
+                if score < TRIAGE_CANDIDATE_MIN:
+                    continue
+                ent = {"id": t["id"], "text": t["text"],
+                       "score": round(score, 3), "kind": "similar"}
+                if score >= TRIAGE_TARGET_MIN:
+                    if best is None or score > best["score"]:
+                        best = ent
+                else:
+                    cands.append(ent)
+        cands.sort(key=lambda x: -x["score"])
+        return best, cands
+
+    best, cands = scan(True)
+    if best is None:
+        best, _ = scan(False)
+    return best, cands[:5]
+
+
+def triage_text(text, now=None):
+    """分诊主入口（只读）：给一段话返回结构化提议。
+    返回 dict：{ok, action, confidence, need_confirm, reasons, text, target,
+    candidates, status, fields, suggested_tags, fallback_action}。"""
+    now = now or dt.datetime.now()
+    raw = _norm(text)
+    base = {
+        "ok": True,
+        "action": "unknown",
+        "confidence": "low",
+        "need_confirm": True,
+        "reasons": [],
+        "text": raw,
+        "target": None,
+        "candidates": [],
+        "status": None,
+        "fields": {},
+        "suggested_tags": [],
+        "fallback_action": None,
+    }
+    if not raw:
+        base["reasons"].append("empty_text")
+        return base
+    if _TRIAGE_Q_RE.search(raw):
+        base["reasons"].append("question")
+        return base
+
+    tid_m = _TRIAGE_ID_RE.search(raw)
+    tid = tid_m.group(0) if tid_m else None
+
+    # 动作判定：删除 > 状态 > 更新 > 添加
+    action, status = "add", None
+    if any(v in raw for v in TRIAGE_DELETE_VERBS):
+        action = "delete"
+    else:
+        for st, words in TRIAGE_STATUS_GROUPS:
+            if any(w in raw for w in words):
+                action, status = "status", st
+                break
+        if action == "add" and any(v in raw for v in TRIAGE_UPDATE_VERBS):
+            action = "update"
+    # 「需要/要/必须…完成X」是承诺新任务，不是对已有任务下指令（除非带任务 ID）
+    if action in ("status", "update") and not tid and _TRIAGE_HELPER_RE.match(raw):
+        action = "add"
+
+    fields = _triage_fields(raw, now)
+
+    if action == "add":
+        base["action"] = "add"
+        base["fields"] = fields
+        base["suggested_tags"] = _suggest_tags(raw, fields.get("note", ""),
+                                               fields.get("workspace", ""))["suggestions"]
+        hits = find_duplicates(raw)
+        if hits:
+            h = hits[0]
+            base["need_confirm"] = True
+            base["confidence"] = "medium"
+            base["reasons"].append("duplicate")
+            base["target"] = {"id": h["task"]["id"], "text": h["task"]["text"],
+                              "score": round(h["score"], 3), "kind": h["kind"]}
+            base["candidates"] = [{"id": x["task"]["id"], "text": x["task"]["text"],
+                                   "score": round(x["score"], 3), "kind": x["kind"]}
+                                  for x in hits[:5]]
+        else:
+            base["need_confirm"] = False
+            base["confidence"] = "high"
+        return base
+
+    # 删除 / 状态 / 更新：必须锁住目标
+    subject = _triage_subject(raw, action, status)
+    target, cands = _resolve_triage_target(tid, subject)
+    base["action"] = action
+    base["status"] = status
+    base["fields"] = fields
+    base["candidates"] = cands
+    if target:
+        base["target"] = target
+        if action == "delete":
+            # 删除是破坏性动作：无论多确定都要求确认
+            base["need_confirm"] = True
+            base["confidence"] = "medium"
+            base["reasons"].append("destructive")
+        else:
+            base["need_confirm"] = False
+            base["confidence"] = "high"
+    else:
+        base["need_confirm"] = True
+        base["confidence"] = "low"
+        base["reasons"].append("target_not_found")
+        base["fallback_action"] = "add"
+    return base
+
+
+def cmd_triage(args):
+    """分诊：只读提议（JSON 输出）。need_confirm=True 时退出码 3（需确认信号）。"""
+    proposal = triage_text(args.text)
+    print(json.dumps(proposal, ensure_ascii=False, indent=2))
+    return EXIT_NEEDS_CONFIRM if proposal["need_confirm"] else 0
+
+
 def _find_task(tid):
     for date, data in _scan_files().items():
         for t in data["tasks"]:
@@ -1927,6 +2269,52 @@ def cmd_dep(args):
     if not deps:
         print("  (no dependencies)")
     return 0
+
+
+def _delete_task(tid, now=None, quiet=False):
+    """删除任务并清理其他任务对它的依赖 / 父任务引用；维护归档不变量。
+    文件清空后尝试删除文件（删除不可用时写回 归档:false 空文件）。
+    返回退出码：0=成功，2=未找到。quiet=True 时不打印（网页端复用）。"""
+    now = now or dt.datetime.now()
+    date, data, t = _find_task(tid)
+    if t is None:
+        if not quiet:
+            print("Task %s not found" % tid, file=sys.stderr)
+        return 2
+    data["tasks"] = [x for x in data["tasks"] if x.get("id") != tid]
+    if data["tasks"]:
+        all_done = all(x["status"] == "结束" for x in data["tasks"])
+        data["archived"] = all_done
+        save_file(date, data["archived"], data["tasks"])
+    else:
+        try:
+            os.remove(_file_path(date))
+        except OSError:
+            data["archived"] = False
+            save_file(date, False, data["tasks"])
+    for d2, d2data in _scan_files().items():
+        changed = False
+        for x in d2data["tasks"]:
+            if tid in (x.get("depends_on") or []):
+                x["depends_on"] = [d for d in x.get("depends_on") if d != tid]
+                x["updated"] = _fmt(now)
+                changed = True
+            if (x.get("parent") or "") == tid:
+                x["parent"] = ""
+                x["updated"] = _fmt(now)
+                changed = True
+        if changed:
+            d2_all = all(y["status"] == "结束" for y in d2data["tasks"])
+            d2data["archived"] = d2_all
+            save_file(d2, d2data["archived"], d2data["tasks"])
+    build_index(now)
+    if not quiet:
+        print("Deleted: %s %s" % (tid, t["text"]))
+    return 0
+
+
+def cmd_delete(args):
+    return _delete_task(args.id)
 
 
 def _set_status(tid, status, force=False):
@@ -2423,9 +2811,39 @@ def cmd_env(args):
                 print("Error: unsupported web UI config key %s (supported: ui.port / ui.prompt)" % k,
                       file=sys.stderr)
                 return 2
+        elif k.startswith("capture."):
+            # 捕获服务配置（快捷键读剪贴板 -> 分诊）：enabled / hotkey / triage_types.* /
+            # confirm_delete / toast
+            ck = k[len("capture."):]
+            if ck == "enabled":
+                env.setdefault("capture", {})["enabled"] = _str_to_bool(v)
+            elif ck == "hotkey":
+                mods, err = _hotkey_parse(v)
+                if mods is None:
+                    print("Error: %s" % err, file=sys.stderr)
+                    return 2
+                env.setdefault("capture", {})["hotkey"] = v
+            elif ck == "confirm_delete":
+                env.setdefault("capture", {})["confirm_delete"] = _str_to_bool(v)
+            elif ck == "toast":
+                env.setdefault("capture", {})["toast"] = _str_to_bool(v)
+            elif ck.startswith("triage_types."):
+                a = ck[len("triage_types."):]
+                if a not in TRIAGE_TYPES_ALL:
+                    print("Error: unsupported capture.triage_types key %s (supported: %s)"
+                          % (k, " / ".join("capture.triage_types." + x for x in TRIAGE_TYPES_ALL)),
+                          file=sys.stderr)
+                    return 2
+                env.setdefault("capture", {}).setdefault("triage_types", {})[a] = _str_to_bool(v)
+            else:
+                print("Error: unsupported capture config key %s (supported: capture.enabled / "
+                      "capture.hotkey / capture.triage_types.add|update|delete|status / "
+                      "capture.confirm_delete / capture.toast)" % k, file=sys.stderr)
+                return 2
         else:
             print("Error: unsupported config key %s (supported: path_style / storage_dir / editor.path / "
-                  "editor.label / editor.args / defaults.* / ui.port / ui.prompt)" % k, file=sys.stderr)
+                  "editor.label / editor.args / defaults.* / ui.port / ui.prompt / capture.*)" % k,
+                  file=sys.stderr)
             return 2
     # 存储目录变更：旧目录还有待办时必须让用户显式二选一，不能悄悄改配置把数据落下
     storage_changed = bool(new_storage) and os.path.abspath(new_storage) != os.path.abspath(old_storage)
@@ -2472,6 +2890,12 @@ def cmd_env(args):
     print("Effective storage directory: %s" % _storage_dir())
     print("Web UI service: port %d; check & ask to start after changes: %s (%s env --set ui.prompt=off to disable)"
           % (_ui_port(), "enabled" if _ui_prompt_enabled() else "disabled", _script_cmd()))
+    cap = _capture_view()
+    print("Capture service (hotkey reads clipboard -> triage): %s | hotkey %s%s | triage types: %s | confirm delete: %s | toast: %s"
+          % ("enabled" if cap.get("enabled") else "disabled", cap.get("hotkey"),
+             "" if cap.get("hotkey_valid") else " (%s)" % cap.get("hotkey_error"),
+             ", ".join(a for a in TRIAGE_TYPES_ALL if cap.get("triage_types", {}).get(a)),
+             "yes" if cap.get("confirm_delete") else "no", "yes" if cap.get("toast") else "no"))
     st = editor_status()
     if st["available"]:
         print("Effective editor: %s (%s)" % (st["label"] or "configured", st["path"]))
@@ -2660,6 +3084,12 @@ def main():
     pc.add_argument("--text", required=True)
     pc.add_argument("--exclude-id", default="", help="task ID to exclude from comparison")
 
+    ptg = sub.add_parser("triage", help="triage: judge whether a paragraph means add / update / delete / change status (read-only, JSON output; exit 3 when confirmation is needed)")
+    ptg.add_argument("--text", required=True, help="the paragraph to judge (e.g. clipboard content)")
+
+    pdel = sub.add_parser("delete", help="delete a todo (also cleans other todos' dependency / parent references to it)")
+    pdel.add_argument("id")
+
     pts = sub.add_parser("suggest-tags", help="suggest tags (suggestion only, nothing is written; JSON output)")
     pts.add_argument("--text", required=True, help="todo content")
     pts.add_argument("--note", default="", help="note (also used as a hint)")
@@ -2732,6 +3162,8 @@ def main():
     handlers = {
         "add": lambda a: cmd_add(a),
         "check": lambda a: cmd_check(a),
+        "triage": lambda a: cmd_triage(a),
+        "delete": lambda a: cmd_delete(a),
         "suggest-tags": lambda a: cmd_suggest_tags(a),
         "done": lambda a: cmd_done(a),
         "start": lambda a: cmd_start(a),

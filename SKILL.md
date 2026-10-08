@@ -1,6 +1,6 @@
 ---
 name: awam-todo
-version: 0.6.0
+version: 0.7.0
 description: >-
   Personal todo management skill. Parses natural-language todos from the
   session (task text, importance, urgency, note, workspace dir, related docs,
@@ -21,7 +21,14 @@ description: >-
   an optional local web UI (server.py) is prompted after mutations
   (ui.port / ui.prompt). Language policy: the AI conversation follows the
   user's language; CLI/API output is fixed English; the web UI is i18n
-  (English default, switchable to Chinese; inline, offline-safe). Use when the
+  (English default, switchable to Chinese; inline, offline-safe). A triage
+  entry (`triage`) decides add / update / status / delete from one sentence
+  with pure rules (no LLM), returns JSON, and asks for confirmation when
+  unsure; an optional capture service (global hotkey reads the clipboard —
+  no filtering, the clipboard text is used as the task text — feeds the
+  triage entry and shows system dialogs for anything that needs confirmation
+  or input) runs inside the web UI process and is managed from a Settings
+  page (hotkey + triage-type toggles). Use when the
   user says 记一下/加个待办/帮我记/安排XX/提醒我X日做XX (or English
   equivalents: add a todo, remind me to …, note this down) or invokes
   /awam-todo; also for listing, completing, starting, reopening, archiving,
@@ -67,6 +74,10 @@ command is `scripts/todo.py` (Python 3).
 | Migrate old storage to the current schema | `migrate` (preview by default) / `migrate --apply` |
 | View the index (urgent / today / overdue / in_progress / open / done) | `index` |
 | View one task, a day file, or a month archive | `show <id|YYYY-MM-DD|YYYY-MM>` |
+| Triage one sentence (add/update/status/delete) | `triage --text "..."` (read-only, JSON; exit 3 = needs confirmation) |
+| Delete a todo (also cleans dependency/parent references) | `delete <id>` |
+| Capture the clipboard with a global hotkey (no filtering) | Start the web UI (`server.py`); press the hotkey (default `Ctrl+Alt+T`); clipboard text feeds the triage entry |
+| Manage the capture service (hotkey / triage types / toggles) | Web UI **Settings** page, or `env --set capture.*` |
 
 ## Quick command reference
 
@@ -83,6 +94,8 @@ command is `scripts/todo.py` (Python 3).
 | `archive` / `archive-month` (`monthly-archive`) | Archive a day file / run monthly archiving |
 | `migrate` | Preview or apply schema migration |
 | `list` / `show` / `index` | List todos / view a task, day file or month / view the index |
+| `triage` | Read-only triage of one sentence → add/update/status/delete (+parsed fields), JSON; exit 3 when confirmation is needed |
+| `delete` | Delete a todo (also cleans other tasks' dependency/parent references) |
 | `init` / `env` | Detect & save the environment / view & modify config |
 
 ## Invocation
@@ -167,10 +180,11 @@ python ...\todo.py env --set path_style=posix --reformat-workspaces
 
 ## Configurable capabilities (the skill must know these)
 
-The skill has **three configurable items**, all stored in `env.json` and all
+The skill has **four configurable items**, all stored in `env.json` and all
 editable via `env --set`. When the user mentions "store todos somewhere
-else", "I don't use Cursor", "open with <editor X>", "web port", or "stop
-asking me to start the UI", go through these three — do not edit code.
+else", "I don't use Cursor", "open with <editor X>", "web port", "stop
+asking me to start the UI", "change the capture hotkey", or "disable
+capture", go through these — do not edit code.
 
 ### 1. Storage directory `storage_dir`
 
@@ -251,6 +265,24 @@ python ...\todo.py env --set ui.prompt=off         # disable "ask to start the w
   variable `AWAM_TODO_UI_PROMPT=off`; it takes precedence over `env.json`.
 - This config only affects the check/ask side in `todo.py`; the web service's
   own port still follows its launch argument (`server.py --port`).
+
+### 4. Capture service `capture`
+
+Global hotkey + clipboard capture that feeds the triage entry, running inside
+the web UI process (see "Capture service" below for the full flow):
+
+```powershell
+python ...\todo.py env --set capture.enabled=false          # stop listening with the UI
+python ...\todo.py env --set capture.hotkey="Ctrl+Shift+X" # change the hotkey (re-registers on UI start)
+python ...\todo.py env --set capture.confirm_delete=false   # delete without asking (not recommended)
+python ...\todo.py env --set capture.toast=false            # no corner toast
+python ...\todo.py env --set capture.triage_types.delete=false
+                                                             # disable delete triage (falls back to Add + ask)
+```
+
+`env` output prints the current capture configuration line
+(`Capture service (hotkey reads clipboard -> triage): …`). Invalid hotkeys
+and unknown sub-keys are rejected with exit 2.
 
 ## Parsing a todo in session (the core of `add`)
 
@@ -450,6 +482,91 @@ User: 记一下，明天上午十点前写好季度报告，重要，备注里�
 # If the user insists on creating:
 → python ...\todo.py add --force --text "写好季度报告" ...
 ```
+
+## Triage entry (`triage`) — one sentence → add / update / status / delete
+
+A **read-only, pure-rule** entry that decides what a sentence means for the
+todo list. No LLM involved — the AI conversation may use it directly
+(e.g. the user pastes a random sentence), and the capture service feeds it
+from the clipboard. It never writes anything by itself.
+
+```powershell
+python ...\todo.py triage --text "把继续detect-agent软件的开发标记为完成"   # JSON on stdout
+python ...\todo.py triage --text "..." > triage.json
+echo %ERRORLEVEL%   # 0 = decisive, 3 = needs confirmation
+```
+
+Decision order: **delete > status > update > add**. Questions ("…？") and
+utterances with no actionable verb fall back to `unknown` + `need_confirm`.
+Promises with lead-ins like 需要/要/必须/应该/记得 that target no existing
+task are forced back to `add` (a commitment to a new task). Fields extracted
+by rule: `due` (明天/下周一/3天后/HH:MM…), `important`/`urgent` (重要/紧急),
+`备注:`, `标签:`, workspace paths, and update/delete subjects. The target is
+resolved against real tasks by T-ID or by text similarity (prefers unfinished
+tasks); when a target cannot be locked with enough confidence, the result is
+`need_confirm` with `candidates` (or a `fallback_action=add`).
+
+JSON contract (`cmd_triage` output):
+
+| Field | Meaning |
+|-------|---------|
+| `action` | `add` / `update` / `status` / `delete` / `unknown` |
+| `confidence` | `high` / `medium` / `low` |
+| `need_confirm` | whether the caller must confirm before executing (destructive delete always `true`) |
+| `reasons` | why confirmation is needed (`destructive` / `question` / `duplicate` / `target_not_found` / `action_disabled` …) |
+| `text` | **the original sentence, verbatim** (no rule filtering — this is the captured task content) |
+| `target` / `candidates` | matched task `{id, text, score, kind}` (kind: `exact` / `similar`) |
+| `status` | target status for a `status` action (结束/进行中/待开始/维护/其他) |
+| `fields` | parsed extras: `due` / `importance` / `urgent` / `note` / `tags` / `workspace` / `text` (for updates) |
+| `suggested_tags` | read-only tag suggestions for `add` (never written) |
+| `fallback_action` | what to propose when the target is missing (usually `add`) |
+
+**AI usage in session**: run `triage --text "<the user's sentence>"`; if
+`need_confirm` is true (or `action=delete`), confirm with the user first, then
+execute the underlying command (`add` / `done`/`start` for status / `add
+--update-id` / `delete`). If `need_confirm` is false and `action=add`, proceed
+with `add` and the parsed `fields`.
+
+## Capture service (global hotkey → clipboard → triage → system dialogs)
+
+A **no-filter capture**: whatever text is on the clipboard when the hotkey is
+pressed is handed verbatim to the triage entry as the task content. No
+keyword filtering, no length check — the raw clipboard text **is** the task
+content. The service runs **inside the web UI process** (`web/server.py`), so
+it is started/stopped together with the UI and configured from the UI's
+**Settings** page.
+
+- Start: launch the web UI (`python ...\web\server.py`). On startup it
+  registers the hotkey (default `Ctrl+Alt+T`) and prints
+  `Capture service: listening: …`.
+- Press the hotkey: the service reads the clipboard → `triage_text` →
+  applies the enabled triage types → executes:
+  - `need_confirm=false` (high-confidence add/status/update) → executes
+    directly, shows a corner toast (toggleable);
+  - otherwise → **a system dialog (tkinter) pops up** showing the verdict and
+    asking for confirmation / letting the user fill fields (deadline, tags,
+    note, importance/urgency, target choice, new status);
+  - **delete** always asks (toggleable via `capture.confirm_delete`);
+  - a blocked operation (dependencies/subtasks/duplicate) pops a second
+    dialog offering "Force".
+- Dialog language: fixed English labels; Chinese data values (status /
+  importance / urgency / tags / original text) are shown verbatim.
+- Stop: stop the web UI process (Ctrl+C) — the hotkey listener dies with it.
+
+Configuration (all in `env.json` under `capture`, managed from the web UI
+Settings page or `env --set capture.*`):
+
+| Key | Meaning |
+|-----|---------|
+| `capture.enabled` | `true` (default) / `false` — start the hotkey listener with the UI |
+| `capture.hotkey` | `Ctrl+Alt+T` (default). Modifiers `Ctrl`/`Alt`/`Shift`/`Win` + `F1`–`F24`, a letter/digit, `Space`, `Enter`, `Tab`, `Esc`; at least one modifier required |
+| `capture.confirm_delete` | `true` (default) — always confirm before deleting from the capture dialog |
+| `capture.toast` | `true` (default) — corner toast after each capture |
+| `capture.triage_types` | `{add, update, delete, status}` all `true` by default; a disabled action always asks and **falls back to `add`** |
+
+The Settings page also offers a **Try triage** box: paste a sentence, see the
+JSON verdict read-only (POST `/api/capture/triage`) — nothing is written or
+executed.
 
 ## Contingency plans: blocker + counter (optional, but recommended)
 
@@ -651,11 +768,21 @@ When the user asks to "view todos on a web page / open the board / web view /
 operate todos in the browser", start the local web front-end:
 
 ```powershell
-python "...\awam-todo\web\server.py"              # default port 8796, opens the browser after start
+start-awam-todo.cmd                      # single entry: stop stale server, start UI backend + capture service together
+powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\start-awam-todo.ps1" [-NoBrowser]
+python "...\awam-todo\web\server.py"     # direct; the capture service starts inside the same process
 python "...\awam-todo\web\server.py" --port 9000  # specify a port
-python "...\awam-todo\web\server.py" --no-browser # start without opening a browser
 ```
 
+- **The recommended single entry is `start-awam-todo.cmd`** (or the `.ps1` it
+  calls): it first stops any **stale awam-todo server** (a leftover process
+  that holds the port — including ones launched with a relative
+  `web\server.py` path), waits for the port to free, then starts the web UI
+  backend **and the capture service together** in one process, and finally
+  self-checks `/api/settings` printing the capture-service state
+  (`Capture service state: running`). If the UI previously showed
+  「服务未运行 / 加载失败」in the Settings page, that usually means an
+  old pre-upgrade server still held the port — re-run this entry to fix it.
 - The service stays in the background; browse to `http://127.0.0.1:8796/`.
 - **Auto check & ask after mutations (LLM / CLI both)**: after a successful
   **add / maintain** of a todo (`add` / `add --update-id` / `done` / `start`
@@ -750,8 +877,15 @@ REST API (local machine only):
   manager
 - `POST   /api/workspace/editor`    open a directory with the editor
   configured in `env.json` (`/api/workspace/cursor` is the legacy alias)
+- `GET    /api/settings`            capture-service config + current service state
+- `PUT    /api/settings`            update capture settings
+  (`{capture:{enabled,hotkey,confirm_delete,toast,triage_types}}`); re-registers
+  the hotkey immediately, response includes the new service state
+- `POST   /api/capture/triage`      run the triage entry on `{text}` — same JSON
+  contract as the CLI `triage` command (read-only)
 
-If an old service already occupies the port at startup, end the old python
-process first, then restart. Web changes and CLI `todo.py` share the same
+If an old service already occupies the port at startup, use the single entry
+(`start-awam-todo.cmd`) which stops the stale server automatically before
+restarting. Web changes and CLI `todo.py` share the same
 source; whichever side operates last, the other side always sees the latest
 state.

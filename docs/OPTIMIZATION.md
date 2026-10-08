@@ -191,3 +191,40 @@
   "files as source of truth + CLI/web same-source + revision merge + patch
   queue" architecture is more rigorous; do not regress for the sake of a
   "single file".
+
+
+---
+
+## VI. Implemented (v0.7.0)
+
+### 23. Triage entry `triage` (pure rules, no LLM)
+
+- Decides add / update / status / delete from one sentence: `scripts/todo.py triage --text "..."`.
+  Read-only, rule-based; order delete > status > update > add; questions and
+  verb-less sentences fall back to `unknown + need_confirm`; commitment leads
+  (需要/要/必须/应该/记得…) are forced back to `add`; targets resolve by T-ID or
+  text similarity (prefers unfinished tasks), with `candidates` /
+  `fallback_action=add` when not locked. Extracts due / importance / urgency /
+  note / tags / workspace / update text. JSON contract:
+  `action, confidence, need_confirm, reasons, text (verbatim, unfiltered),
+  target, candidates, status, fields, suggested_tags, fallback_action`;
+  exit 3 when confirmation is required (delete always).
+- Use in session: run triage on the user's sentence, confirm when needed, then
+  execute the underlying command.
+
+### 24. Capture service `capture` (hotkey → clipboard → triage → system dialogs)
+
+- `scripts/capture.py` (stdlib only) runs **inside `web/server.py`**:
+  - **No filtering** — the raw clipboard text is the task content;
+  - Win32 global hotkey (default Ctrl+Alt+T; RegisterHotKey + message-loop
+    thread) + CF_UNICODETEXT clipboard read;
+  - Anything needing confirmation/input pops a **system dialog (tkinter)**:
+    verdict, target candidates, deadline/tags/note/importance/urgency, new
+    status; delete always confirms (toggleable); guarded operations offer
+    "Force" in a second dialog;
+  - Config lives in `env.json` under `capture` (enabled / hotkey /
+    confirm_delete / toast / triage_types), managed from the new web UI
+    **Settings** page, which also has a read-only "Try triage" box;
+    API: `GET|PUT /api/settings`, `POST /api/capture/triage`.
+- Boundary: Windows only (Win32 hotkey/clipboard); degrades gracefully without
+  a GUI; a taken hotkey errors with a hint to change it.

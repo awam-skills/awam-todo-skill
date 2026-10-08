@@ -1,6 +1,6 @@
 ---
 name: awam-todo
-version: 0.6.0
+version: 0.7.0
 description: >-
   输入与管理 Awam 的 To-Do：在会话中解析用户自然语言里的待办内容、重要性、备注、工作空间目录、
   相关文档、链接与时间，调用脚本追加到按日期划分的存储文件，并自动维护索引（todo / in_progress /
@@ -20,6 +20,10 @@ description: >-
   （`env --set editor.path`，`init` 自动探测，未配置/失效时报错并停用入口，不猜路径）。
   支持**网页 UI 服务联动**：成功添加/维护待办后自动检查本地网页服务是否在运行，未启动时
   弹框询问是否启动 UI（`ui.port` / `ui.prompt` 可配置）。
+  提供**分诊入口（`triage`）**：用纯规则（不依赖大模型）把一句话判定为 新增 / 更新 / 改状态 /
+  删除，输出 JSON，拿不准时要求确认；提供**捕获服务（capture）**：全局快捷键读取剪贴板内容
+  **不做规则筛选**（剪贴板原文即任务内容），喂给分诊入口，凡需确认/填写一律系统弹框；
+  捕获服务融合在网页 UI 服务进程内，由 UI 的**设置页**管理（快捷键与分诊类型开关）。
   **语言策略**：AI 对话跟随用户语言；CLI/API 输出固定英文；网页 UI 中英国际化（默认英文、
   可切中文，内联实现、断网可用）。
   当用户说“记一下/加个待办/帮我记/安排XX/提醒我X日做XX”或显式
@@ -63,6 +67,10 @@ description: >-
 | 旧版本存储迁移到当前 schema | `migrate`（默认预览） / `migrate --apply` |
 | 查看索引（紧急/今日/逾期/进行中/开放/已完成） | `index` |
 | 查看单条、某天文件或某月归档 | `show <id|YYYY-MM-DD|YYYY-MM>` |
+| 对一句话分诊（新增/更新/改状态/删除） | `triage --text "..."`（只读，JSON；退出码 3 = 需要确认） |
+| 删除一条待办（同时清理依赖/父任务引用） | `delete <id>` |
+| 用全局快捷键捕获剪贴板（不做筛选） | 启动网页 UI（`server.py`）；按快捷键（默认 `Ctrl+Alt+T`）；剪贴板原文喂给分诊入口 |
+| 管理捕获服务（快捷键 / 分诊类型 / 开关） | 网页 UI **设置**页，或 `env --set capture.*` |
 
 ## 命令速查表
 
@@ -79,6 +87,8 @@ description: >-
 | `archive` / `archive-month`（`monthly-archive`） | 归档某天文件 / 执行月度归档 |
 | `migrate` | 预览或执行 schema 迁移 |
 | `list` / `show` / `index` | 列出待办 / 查看任务、某天或某月 / 查看索引 |
+| `triage` | 对一句话做只读分诊 → 新增/更新/改状态/删除（含解析出的字段），JSON；需确认时退出码 3 |
+| `delete` | 删除一条待办（同时清理其他任务对它的依赖/父任务引用） |
 | `init` / `env` | 探测并保存环境 / 查看与修改配置 |
 
 ## 调用
@@ -152,10 +162,11 @@ python ...\todo.py env --set path_style=posix --reformat-workspaces
 - `--reformat-workspaces`：把全部存储文件中的工作空间统一为当前 `path_style`（可配合改风格使用）。
 - 修改即写回 `env.json`；改风格后可重跑 `init` 或直接 `--reformat-workspaces` 让存量数据同步。
 
-## 三条可配置能力（技能必须知晓）
+## 四条可配置能力（技能必须知晓）
 
-本技能有**三个可配置项**，都存在 `env.json`，都能通过 `env --set` 修改。用户提到「换个地方存待办」
-「我用的不是 Cursor」「用 XX 编辑器打开」「网页端口」「别弹启动询问框」时，走这三条，不要改代码。
+本技能有**四个可配置项**，都存在 `env.json`，都能通过 `env --set` 修改。用户提到「换个地方存待办」
+「我用的不是 Cursor」「用 XX 编辑器打开」「网页端口」「别弹启动询问框」「改捕获快捷键」「关掉捕获」时，
+走这四条，不要改代码。
 
 ### 1. 存储目录 `storage_dir`
 
@@ -223,6 +234,21 @@ python ...\todo.py env --set ui.prompt=off         # 关闭「维护后询问启
 
 - 临时关闭（自测 / CI / 脚本化调用）：设置环境变量 `AWAM_TODO_UI_PROMPT=off`，优先级高于 `env.json`。
 - 该配置只影响 `todo.py` 侧的检查与询问；网页服务本身的端口仍以启动参数为准（`server.py --port`）。
+
+### 4. 捕获服务 `capture`
+
+全局快捷键 + 剪贴板捕获，喂给分诊入口，运行在网页 UI 服务进程内（完整流程见下方「分诊入口与捕获服务」）：
+
+```powershell
+python ...\todo.py env --set capture.enabled=false           # 随 UI 启动时不再监听
+python ...\todo.py env --set capture.hotkey="Ctrl+Shift+X"   # 改快捷键（UI 启动时按新键注册）
+python ...\todo.py env --set capture.confirm_delete=false     # 删除前不确认（不推荐）
+python ...\todo.py env --set capture.toast=false              # 捕获后不弹角标提示
+python ...\todo.py env --set capture.triage_types.delete=false # 关闭删除分诊（改为「询问 + 回落为新增」）
+```
+
+`env` 输出末尾会打印当前捕获配置行
+（`Capture service (hotkey reads clipboard -> triage): …`）。非法快捷键与未知子键会被拒绝（退出码 2）。
 
 ## 会话中解析（新增待办的核心步骤）
 
@@ -381,6 +407,72 @@ python ...\todo.py show T-20261002-005                                 # 查看�
 → python ...\todo.py add --force --text "写好季度报告" ...
 ```
 
+## 分诊入口（`triage`）—— 一句话 → 新增 / 更新 / 改状态 / 删除
+
+一个**只读、纯规则**的入口，用来判断一句话对待办列表意味着什么。不依赖大模型 —— AI 会话可以直接
+用它（比如用户随手贴来一句话），捕获服务也从剪贴板喂给它。它本身从不写任何数据。
+
+```powershell
+python ...\todo.py triage --text "把继续detect-agent软件的开发标记为完成"   # stdout 输出 JSON
+echo %ERRORLEVEL%   # 0 = 判定明确，3 = 需要确认
+```
+
+判定顺序：**删除 > 改状态 > 更新 > 新增**。疑问句（…？）与不含动作动词的句子回落到
+`unknown` + `need_confirm`；以「需要/要/必须/应该/记得…」开头且没有命中已有任务时**强制回落为
+`add`**（这是承诺新任务）。规则抽取字段：`due`（明天/下周一/3天后/HH:MM…）、重要/紧急、
+`备注:`、`标签:`、工作空间路径，以及更新/删除的主体。目标解析：按 T-ID 直接命中，否则按文本相似度
+匹配真实任务（优先未结束任务）；锁定不了目标时给 `need_confirm` + `candidates`
+（或 `fallback_action=add`）。
+
+JSON 契约（`cmd_triage` 输出）：
+
+| 字段 | 含义 |
+|------|------|
+| `action` | `add` / `update` / `status` / `delete` / `unknown` |
+| `confidence` | `high` / `medium` / `low` |
+| `need_confirm` | 执行前是否必须确认（删除永远为 `true`） |
+| `reasons` | 需要确认的原因（`destructive` / `question` / `duplicate` / `target_not_found` / `action_disabled` …） |
+| `text` | **原句原文，不做任何规则筛选**（这就是被捕获的任务内容） |
+| `target` / `candidates` | 命中的任务 `{id, text, score, kind}`（kind：`exact` / `similar`） |
+| `status` | `status` 动作的目标状态（结束/进行中/待开始/维护/其他） |
+| `fields` | 解析出的附加字段：`due` / `importance` / `urgent` / `note` / `tags` / `workspace` / `text`（更新时） |
+| `suggested_tags` | `add` 的只读标签建议（绝不写入） |
+| `fallback_action` | 目标缺失时建议的动作（通常是 `add`） |
+
+**AI 会话中的用法**：对用户这句话跑 `triage --text "<原话>"`；若 `need_confirm=true`（或
+`action=delete`），先与用户确认，再执行底层命令（`add` / `done`、`start` 表达状态 / `add --update-id`
+表达更新 / `delete`）。若 `need_confirm=false` 且 `action=add`，直接用解析出的 `fields` 走 `add`。
+
+## 捕获服务（全局快捷键 → 剪贴板 → 分诊 → 系统弹框）
+
+**不做规则筛选的捕获**：按快捷键时剪贴板里的**原文**原样当作任务内容交给分诊入口。没有关键词过滤、
+没有长度限制 —— 剪贴板原文**就是**任务内容。服务运行在**网页 UI 服务进程**（`web/server.py`）内，
+随 UI 一起启停，配置走 UI 的**设置页**。
+
+- 启动：运行网页 UI（`python ...\web\server.py`）。启动时注册全局快捷键（默认 `Ctrl+Alt+T`）并打印
+  `Capture service: listening: …`。
+- 按快捷键：读取剪贴板 → `triage_text` → 应用启用的分诊类型 → 执行：
+  - `need_confirm=false`（高置信的新增/改状态/更新）→ 直接执行，弹角标提示（可关）；
+  - 否则 → **系统弹框（tkinter）**：展示判定结果，要求确认，并允许补填字段
+    （截止时间、标签、备注、重要/紧急、目标选择、新状态）；
+  - **删除永远先确认**（可用 `capture.confirm_delete` 关闭）；
+  - 被守卫拦截（依赖/子任务/重复）时再弹一个「是否强制」的确认框。
+- 弹框语言：标签固定英文；中文数据值（状态 / 重要 / 紧急 / 标签 / 原文）原样展示。
+- 停止：停掉网页 UI 进程（Ctrl+C），热键监听随之结束。
+
+配置（都在 `env.json` 的 `capture` 段，可在网页 UI 设置页管理，或 `env --set capture.*`）：
+
+| 键 | 说明 |
+|----|------|
+| `capture.enabled` | `true`（默认）/ `false` —— 是否随 UI 启动热键监听 |
+| `capture.hotkey` | `Ctrl+Alt+T`（默认）。修饰键 `Ctrl`/`Alt`/`Shift`/`Win` + `F1`–`F24`、字母/数字、`Space`、`Enter`、`Tab`、`Esc`；至少一个修饰键 |
+| `capture.confirm_delete` | `true`（默认）—— 捕获弹框里删除前必须确认 |
+| `capture.toast` | `true`（默认）—— 每次捕获后弹角标提示 |
+| `capture.triage_types` | `{add, update, delete, status}` 默认全开；被禁用的动作一律先询问并**回落为 `add`** |
+
+设置页还提供**试用分诊**输入框：粘贴一句话看 JSON 判定结果（只读，POST `/api/capture/triage`），
+不会写入也不会执行。
+
 ## 预案：障碍 + 对策（选填，但强烈建议填）
 
 每条待办可带一组**实施意图（if-then）**，落盘为 `障碍:` / `对策:` 两行，索引里是 `blocker` / `counter`：
@@ -532,11 +624,16 @@ python ...\todo.py env --set defaults.importance=重要
 当用户要求「用网页展示待办 / 打开看板 / web 查看 / 网页操作待办」时，启动本地网页前端：
 
 ```powershell
-python "...\awam-todo\web\server.py"              # 默认端口 8796，启动后自动打开浏览器
+start-awam-todo.cmd                      # 统一入口：先停残留旧服务，再同时启动 UI 后端 + 捕获服务
+powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\start-awam-todo.ps1" [-NoBrowser]
+python "...\awam-todo\web\server.py"     # 直接启动；捕获服务就在同一进程内一起起
 python "...\awam-todo\web\server.py" --port 9000  # 指定端口
-python "...\awam-todo\web\server.py" --no-browser # 只启动不打开浏览器
 ```
 
+- **推荐统一入口是 `start-awam-todo.cmd`**（或其调用的 `.ps1`）：先停掉**残留的旧 awam-todo 服务**
+  （占用端口的遗留进程，含以相对路径 `web\server.py` 启动的），等端口释放，再在**同一个进程里同时启动**
+  网页 UI 后端与捕获服务，最后自检 `/api/settings` 并打印捕获服务状态（`Capture service state: running`）。
+  如果设置页之前显示「服务未运行 / 加载失败」，通常就是升级前的旧服务进程还占着端口 —— 重新跑这个入口即可修复。
 - 服务常驻后台，浏览器访问 `http://127.0.0.1:8796/`。
 - **维护后自动检查与询问启动（LLM / CLI 通用）**：成功**添加 / 维护**一条待办后
   （`add` / `add --update-id` / `done` / `start` / `work` / `reopen` / `postpone` /
@@ -576,7 +673,8 @@ python "...\awam-todo\web\server.py" --no-browser # 只启动不打开浏览器
   若上次关闭时有未保存更改，重开页面会提示恢复。
 - 后端复用 `todo.py` 的解析 / 校验 / 索引逻辑；命令行改动后网页端保存时会自动合并到最新文件
   （`external_changed=true` 时提示「检测到外部修改，已合并保存」）。
-- 停止：在运行窗口按 Ctrl+C（或结束对应 python 进程）。
+- 停止：在运行窗口按 Ctrl+C（或结束对应 python 进程）；再用统一入口（`start-awam-todo.cmd`）重启时
+  会自动停掉端口上的残留旧服务。
 
 REST API（仅本机）：
 - `GET    /api/todos`               列表 + 摘要（可 `?state=`、`?q=`、`?tag=` 过滤；含 `revision` 文件指纹）
@@ -592,6 +690,11 @@ REST API（仅本机）：
   `changed`（实际写盘文件数；0 表示内容与磁盘一致，未写入）。
 - `POST   /api/workspace/open`      用系统文件管理器打开目录
 - `POST   /api/workspace/editor`    用 env.json 配置的编辑器打开目录（`/api/workspace/cursor` 为历史别名）
+- `GET    /api/settings`            捕获服务配置 + 当前服务状态
+- `PUT    /api/settings`            更新捕获设置
+  （`{capture:{enabled,hotkey,confirm_delete,toast,triage_types}}`）；立即重新注册快捷键，
+  响应里带新的服务状态
+- `POST   /api/capture/triage`      对 `{text}` 跑分诊入口 —— 与 CLI `triage` 同一 JSON 契约（只读）
 
 启动时若发现旧服务已占端口，先结束原 python 进程再重启。网页改动与命令行 `todo.py` 完全同源，
 任一端操作后另一端看到的都是最新状态。

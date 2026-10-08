@@ -461,6 +461,47 @@ def main():
     rc, out, err = run(tmp, "add", "--text", "网页UI联调任务", "--force")
     check("UI 检查关闭时 add 正常且不弹框", rc == 0 and "web UI" not in out.lower(), (out or err)[:200])
 
+    # ------------------------------------------------------------------
+    print("== 19. 分诊 triage（只读）+ delete 命令 ==")
+    import json as _json3
+
+    def _triage(text):
+        rc, out, err = run(tmp, "triage", "--text", text)
+        try:
+            return rc, _json3.loads(out)
+        except Exception:
+            return rc, {}
+
+    rc, j = _triage("明天上午十点前写好季度报告")
+    check("triage 普通承诺 -> add", rc == 0 and j.get("action") == "add", str(j)[:200])
+    check("triage 抽取截止时间", (j.get("fields") or {}).get("due") in ("明天", "明天 10:00"),
+          str(j.get("fields")))
+    check("triage 高置信无需确认", j.get("need_confirm") is False, str(j.get("need_confirm")))
+
+    rc, out, err = run(tmp, "add", "--text", "继续detect-agent软件的开发", "--force")
+    tid = _task_id_from(out) or ""
+    check("分诊前置任务创建成功", bool(tid), (out or err)[:200])
+
+    rc, j = _triage("把继续detect-agent软件的开发标记为完成")
+    check("triage 状态动词 -> status", j.get("action") == "status", str(j)[:200])
+    check("triage 锁定真实任务ID", (j.get("target") or {}).get("id") == tid, str(j.get("target")))
+    check("triage 状态目标为结束", j.get("status") == "结束", str(j.get("status")))
+
+    rc, j = _triage("删除 继续detect-agent软件的开发")
+    check("triage 删除动词 -> delete", j.get("action") == "delete", str(j)[:200])
+    check("triage 删除必确认", j.get("need_confirm") is True, str(j.get("need_confirm")))
+    check("triage 删除理由标明破坏性", "destructive" in (j.get("reasons") or []), str(j.get("reasons")))
+    check("triage 删除锁定真实任务ID", (j.get("target") or {}).get("id") == tid, str(j.get("target")))
+
+    rc, j = _triage("这周末去哪儿玩？")
+    check("triage 疑问句 -> unknown+need_confirm",
+          j.get("action") == "unknown" and j.get("need_confirm") is True, str(j)[:200])
+
+    rc, out, err = run(tmp, "delete", tid)
+    check("delete 命令退出码 0", rc == 0, (out or err)[:200])
+    rc, out, err = run(tmp, "show", tid)
+    check("delete 后任务确实不存在", rc != 0, (out or err)[:200])
+
     # 通过就清掉临时目录；失败时留下现场，便于照着失败项翻文件排查。
     # 想强制清理（或强制保留）用环境变量 AWAM_TODO_KEEP_TMP=0 / 1。
     keep_env = os.environ.get("AWAM_TODO_KEEP_TMP")

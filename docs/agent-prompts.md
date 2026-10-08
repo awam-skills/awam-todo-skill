@@ -19,7 +19,8 @@
 【待办自动分诊（awam-todo）】
 对话中出现待办意图（记一下 / 加个待办 / 提醒 / 安排 / 完成 / 删除 / 改期 /
 标记状态，拿不准也算）时，读取文件
-G:\Projects\19AI\skills\awam-todo\docs\prompt-doubao.md
+<技能目录>\docs\prompt-doubao.md
+（把 <技能目录> 换成本机 awam-todo 安装根）
 并严格按其中流程执行；纯问答、闲聊不触发。
 ```
 

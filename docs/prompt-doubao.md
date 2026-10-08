@@ -12,8 +12,10 @@
 
 ## 2. 分诊调用（只读，原句直传、禁止筛选 / 改写 / 润色）
 
+`<技能目录>` 换成本机 awam-todo 安装根（含 `scripts/todo.py` 的那一层）。
+
 ```
-python "G:\Projects\19AI\skills\awam-todo\scripts\todo.py" triage --text "<用户原句>"
+python "<技能目录>\scripts\todo.py" triage --text "<用户原句>"
 ```
 
 返回 JSON：`action`(add|update|status|delete|unknown)、`confidence`、

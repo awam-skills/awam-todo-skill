@@ -1,6 +1,6 @@
 ---
 name: awam-todo
-version: 0.7.0
+version: 0.7.1
 description: >-
   Personal todo management skill. Parses natural-language todos from the
   session (task text, importance, urgency, note, workspace dir, related docs,

@@ -393,10 +393,10 @@ def _migrate_storage(old_dir, new_dir):
     """
     import shutil
     if os.path.abspath(old_dir) == os.path.abspath(new_dir):
-        return True, "新旧目录相同，无需搬迁"
+        return True, "Same directory; nothing to migrate"
     old_files, old_tasks = _storage_file_stats(old_dir)
     if old_files == 0:
-        return True, "旧目录没有待办文件，无需搬迁"
+        return True, "Old directory has no todo files; nothing to migrate"
     os.makedirs(new_dir, exist_ok=True)
     created = []          # 本次新建的目标文件，失败时只回删这些，绝不动目标目录原有内容
     try:
@@ -417,7 +417,7 @@ def _migrate_storage(old_dir, new_dir):
                 os.remove(p)
             except Exception:
                 pass
-        return False, "复制失败，已保留旧目录不动（并回删本次写入的 %d 个目标文件）：%s" % (len(created), e)
+        return False, "Copy failed; the old directory was kept intact (removed the %d target file(s) written this run): %s" % (len(created), e)
     new_files, new_tasks = _storage_file_stats(new_dir)
     if (new_files, new_tasks) != (old_files, old_tasks):
         removed = 0
@@ -427,16 +427,16 @@ def _migrate_storage(old_dir, new_dir):
                 removed += 1
             except Exception:
                 pass
-        return False, ("校验不通过（旧 %d 文件/%d 条，新 %d 文件/%d 条），已保留旧目录不动"
-                       "（并回删本次写入的 %d 个目标文件）。若新目录本身已有待办文件，"
-                       "请先清空或换一个空目录"
+        return False, ("Verification failed (old %d file(s)/%d todo(s) vs new %d file(s)/%d todo(s)); the old directory was "
+                       "kept intact and the %d file(s) written this run were removed. If the new directory already "
+                       "contains todo files, empty it or choose another directory."
                        % (old_files, old_tasks, new_files, new_tasks, removed))
     for fn in sorted(os.listdir(old_dir)):
         src = os.path.join(old_dir, fn)
         if os.path.isdir(src) or not fn.endswith(".md"):
             continue
         os.remove(src)
-    return True, "已搬迁 %d 个文件（%d 条待办）" % (new_files, new_tasks)
+    return True, "Migrated %d file(s) (%d todo(s))" % (new_files, new_tasks)
 
 
 # ---- 编辑器（env.json 的 editor 段） ---------------------------------------
@@ -451,22 +451,22 @@ def resolve_editor():
     """解析出可用的编辑器命令，返回 (cmd, error)。
 
     cmd 为可直接交给 subprocess.Popen 的列表（不含要打开的路径，调用方追加）；
-    不可用（未配置 / 文件不存在 / 命令不在 PATH）时 cmd 为 None，error 为中文原因。"""
+    不可用（未配置 / 文件不存在 / 命令不在 PATH）时 cmd 为 None，error 为失败原因（英文）。"""
     e = _editor_config()
     raw = _norm(e.get("path"))
     if not raw:
-        return None, "未配置编辑器（env.json 缺少 editor.path）"
+        return None, "Editor not configured (env.json is missing editor.path)"
     path = os.path.expanduser(raw)
     seps = [s for s in (os.sep, os.altsep) if s]
     if os.path.isabs(path) or any(s in path for s in seps):
         if not os.path.isfile(path):
-            return None, "编辑器路径失效（文件不存在）：%s" % raw
+            return None, "Editor path invalid (file not found): %s" % raw
         cmd = [path]
     else:
         import shutil
         found = shutil.which(path)
         if not found:
-            return None, "编辑器命令未在 PATH 中找到：%s" % raw
+            return None, "Editor command not found in PATH: %s" % raw
         cmd = [found]
     args = e.get("args")
     if isinstance(args, str):
@@ -532,8 +532,8 @@ def open_editor(target):
     try:
         subprocess.Popen(_launch_argv(cmd, target), **kwargs)
     except Exception as e:  # noqa: BLE001
-        return False, "启动编辑器失败：%s" % e
-    return True, "已用编辑器打开"
+        return False, "Failed to launch editor: %s" % e
+    return True, "Opened in editor"
 
 
 # 常见编辑器探测表（按优先级从上到下，命中第一个即采用）。
@@ -896,13 +896,13 @@ def _pin_info(t, now):
     置顶一定有理由——这是「为什么它在最前面」的唯一来源，不得静默重排。"""
     od = _overdue_days(t, now)
     if od is not None:
-        return 0, "逾期 %d 天，已滚入今日" % od
+        return 0, "Overdue %d day(s), moved to today" % od
     sd = _stall_days(t, now)
     if sd is not None:
-        return 1, "已 %d 天未推进，滚入今日" % sd
+        return 1, "No progress for %d day(s), moved to today" % sd
     dd = _due_in_days(t, now)
     if dd == 0:
-        return 2, "今天到期"
+        return 2, "Due today"
     return None, None
 
 
@@ -1246,15 +1246,15 @@ def find_duplicates(text, exclude_id=None):
     return exact + similar
 
 
-def _print_dup_hits(hits, title="发现重复或近似任务"):
+def _print_dup_hits(hits, title="Found duplicate or similar todos"):
     print(title)
     for h in hits:
         t = h["task"]
-        kind_label = "相同" if h["kind"] == "exact" else "近似(%.0f%%)" % (h["score"] * 100)
+        kind_label = "exact" if h["kind"] == "exact" else "similar (%.0f%%)" % (h["score"] * 100)
         print("  [%s] %s | %s | %s | %s" % (
             kind_label, t.get("id"), h["date"], t.get("status"), t.get("text")))
         if t.get("workspace"):
-            print("         工作空间: %s" % t["workspace"])
+            print("         workspace: %s" % t["workspace"])
 
 
 def _split_list_field(raw):
@@ -1335,7 +1335,7 @@ def _suggest_history_hits(text, note="", workspace=""):
                     "tag": tag,
                     "score": round(TAG_HISTORY_BASE + score, 3),
                     "source": "history",
-                    "evidence": "历史任务 %s《%s》用过标签「%s」（相关度 %.2f）"
+                    "evidence": "Historical task %s “%s” used tag “%s” (similarity %.2f)"
                                 % (t.get("id"), t.get("text"), tag, score),
                 })
     return hits
@@ -1351,14 +1351,14 @@ def _suggest_keyword_hits(text, note="", workspace=""):
         if matched:
             hits.append({
                 "tag": tag, "score": TAG_RULE_SCORE, "source": "keyword",
-                "evidence": "命中领域词：" + "、".join(matched[:3]),
+                "evidence": "keyword match: " + ", ".join(matched[:3]),
             })
     for tag, words in TAG_WORKSPACE_RULES:
         matched = [w for w in words if w in path_tokens]
         if matched:
             hits.append({
                 "tag": tag, "score": TAG_WORKSPACE_SCORE, "source": "workspace",
-                "evidence": "工作空间含领域词：" + "、".join(matched[:3]),
+                "evidence": "workspace contains: " + ", ".join(matched[:3]),
             })
     return hits
 
@@ -1399,7 +1399,7 @@ def _suggest_tags(text, note="", workspace="", existing=None):
             cur["sources"].append(h["source"])
         # 证据去重后再拼接，避免同一句话重复出现在输出里
         if h["evidence"] and h["evidence"] not in cur["evidence"]:
-            cur["evidence"] = (cur["evidence"] + "；" + h["evidence"]) if cur["evidence"] else h["evidence"]
+            cur["evidence"] = (cur["evidence"] + "; " + h["evidence"]) if cur["evidence"] else h["evidence"]
     ranked = sorted(merged.values(), key=lambda h: (-h["score"], h["tag"]))
     kept = [h for h in ranked if h["score"] >= TAG_MIN_SCORE][:TAG_MAX_SUGGEST]
 
@@ -1417,7 +1417,7 @@ def _suggest_tags(text, note="", workspace="", existing=None):
 def _print_tag_suggestion(tid, suggested):
     """把建议标签打印出来提醒确认——注意：这里只打印，绝不写入。"""
     tags_str = ";".join(suggested)
-    print("  建议标签: %s（尚未写入；确认后用：add --update-id %s --tags \"%s\"）"
+    print("  Suggested tags: %s (not written yet; to confirm use: add --update-id %s --tags \"%s\")"
           % (tags_str, tid, tags_str))
 
 
@@ -1489,7 +1489,7 @@ def _apply_task_fields(task, args, now, *, is_new):
         task["due"] = parsed
         # 不推算原则：解析不了就说出来，不静默丢弃、更不猜一个日期
         if args.due and not parsed:
-            print("警告：未识别时间「%s」，该任务未设截止（可写 明天 / 周五 / 2026-10-20 10:00）。"
+            print("Warning: unrecognized time “%s”; no deadline was set (accepted forms: 明天 / 周五 / 2026-10-20 10:00)."
                   % args.due, file=sys.stderr)
     elif is_new:
         task["due"] = None
@@ -1512,41 +1512,41 @@ def _apply_task_fields(task, args, now, *, is_new):
 
 
 def _print_task_summary(prefix, tid, date, task, idx):
-    print("%s %s：%s" % (prefix, tid, task["text"]))
-    print("  日期: %s | 重要: %s | 状态: %s | 紧急: %s" % (
+    print("%s %s: %s" % (prefix, tid, task["text"]))
+    print("  date: %s | importance: %s | status: %s | urgent: %s" % (
         date, task["importance"], task["status"], task["urgent"]))
     if task.get("due"):
-        print("  截止: %s" % task["due"])
+        print("  due: %s" % task["due"])
     if task.get("note"):
-        print("  备注: %s" % task["note"])
+        print("  note: %s" % task["note"])
     if task.get("blocker"):
-        print("  障碍: %s" % task["blocker"])
+        print("  blocker: %s" % task["blocker"])
     if task.get("counter"):
-        print("  对策: %s" % task["counter"])
+        print("  counter: %s" % task["counter"])
     if task.get("workspace"):
-        print("  工作空间: %s" % task["workspace"])
+        print("  workspace: %s" % task["workspace"])
     if task.get("docs"):
-        print("  文档: %s" % "; ".join(task["docs"]))
+        print("  docs: %s" % "; ".join(task["docs"]))
     if task.get("links"):
-        print("  链接: %s" % "; ".join(task["links"]))
+        print("  links: %s" % "; ".join(task["links"]))
     if task.get("depends_on"):
-        print("  依赖: %s" % "; ".join(task["depends_on"]))
+        print("  deps: %s" % "; ".join(task["depends_on"]))
     if task.get("tags"):
-        print("  标签: %s" % "; ".join(task["tags"]))
+        print("  tags: %s" % "; ".join(task["tags"]))
     if task.get("parent"):
-        print("  父任务: %s" % task["parent"])
+        print("  parent: %s" % task["parent"])
     if task.get("from") and task["from"].get("url"):
-        print("  来源: %s | %s" % (task["from"].get("type"), task["from"].get("url")))
+        print("  source: %s | %s" % (task["from"].get("type"), task["from"].get("url")))
     # 置顶必须解释原因；逾期任务必须给出两个出口
     _n = dt.datetime.now()
     pin, reason = _pin_info(task, _n)
     if pin is not None:
-        print("  置顶: %s" % reason)
+        print("  pinned: %s" % reason)
     if _overdue_days(task, _n) is not None:
-        print("  出口: 立即推进 → start/done %s；调整计划 → postpone %s <新时间>" % (tid, tid))
+        print("  exits: advance now → start/done %s; reschedule → postpone %s <new time>" % (tid, tid))
     if _projected_finish(task, _n) is None and task["status"] != "结束":
-        print("  预计完成日: 暂无推算（缺少进展记录）")
-    print("  索引已更新：todo=%d in_progress=%d urgent=%d" % (
+        print("  projected finish: N/A (no progress records)")
+    print("  index updated: todo=%d in_progress=%d urgent=%d" % (
         idx["summary"]["todo"], idx["summary"]["in_progress"], idx["summary"]["urgent"]))
 
 
@@ -1554,7 +1554,7 @@ def _update_existing_task(tid, args, now):
     """按 add 参数更新已有任务；维护归档不变量。"""
     date, data, t = _find_task(tid)
     if t is None:
-        print("未找到任务 %s" % tid, file=sys.stderr)
+        print("Task %s not found" % tid, file=sys.stderr)
         return 2
     old_status = t.get("status")
     _apply_task_fields(t, args, now, is_new=False)
@@ -1562,13 +1562,13 @@ def _update_existing_task(tid, args, now):
     deps = t.get("depends_on") or []
     missing = _missing_deps(deps)
     if missing:
-        print("错误：以下依赖任务不存在：%s" % "; ".join(missing), file=sys.stderr)
+        print("Error: dependency task(s) not found: %s" % "; ".join(missing), file=sys.stderr)
         return 2
     if tid in deps:
-        print("错误：任务不能依赖自身（%s）。" % tid, file=sys.stderr)
+        print("Error: a task cannot depend on itself (%s)." % tid, file=sys.stderr)
         return 2
     if _would_create_cycle(tid, deps):
-        print("错误：该依赖设置会形成循环依赖（%s 间接依赖自身）。" % tid, file=sys.stderr)
+        print("Error: this dependency would create a cycle (%s would indirectly depend on itself)." % tid, file=sys.stderr)
         return 2
     rc = _guard_by_deps(deps, t["status"], args.force)
     if rc != 0:
@@ -1577,13 +1577,13 @@ def _update_existing_task(tid, args, now):
     parent = _norm(t.get("parent"))
     if parent:
         if _find_task(parent)[2] is None:
-            print("错误：父任务 %s 不存在。" % parent, file=sys.stderr)
+            print("Error: parent task %s not found." % parent, file=sys.stderr)
             return 2
         if parent == tid:
-            print("错误：任务不能作为自身的父任务（%s）。" % tid, file=sys.stderr)
+            print("Error: a task cannot be its own parent (%s)." % tid, file=sys.stderr)
             return 2
         if _would_create_parent_cycle(tid, parent):
-            print("错误：该归属会形成循环（%s 成为 %s 的父任务会成环）。" % (parent, tid), file=sys.stderr)
+            print("Error: this assignment would create a cycle (%s becoming parent of %s)." % (parent, tid), file=sys.stderr)
             return 2
     rc = _guard_children_done(tid, t["status"], args.force)
     if rc != 0:
@@ -1592,13 +1592,13 @@ def _update_existing_task(tid, args, now):
     data["archived"] = all_done
     save_file(date, data["archived"], data["tasks"])
     idx = build_index(now)
-    _print_task_summary("已更新（未新建）", tid, date, t, idx)
+    _print_task_summary("updated (not recreated)", tid, date, t, idx)
     if old_status != t["status"]:
-        print("  状态变更: %s -> %s" % (old_status, t["status"]))
+        print("  status changed: %s -> %s" % (old_status, t["status"]))
     if all_done:
-        print("  该文件全部完成，已标记归档")
+        print("  all tasks in this file are done; file marked archived")
     elif old_status == "结束" and t["status"] != "结束":
-        print("  已取消归档标记")
+        print("  archived mark cleared")
     return 0
 
 
@@ -1608,7 +1608,7 @@ def cmd_add(args, now=None):
     date = args.date or now.strftime("%Y-%m-%d")
     text = _norm(args.text)
     if not text:
-        print("错误：必须提供 --text 任务内容。", file=sys.stderr)
+        print("Error: --text (task content) is required.", file=sys.stderr)
         return 2
 
     # 显式指定更新目标：跳过重复检测，直接更新
@@ -1625,13 +1625,13 @@ def cmd_add(args, now=None):
     # 相同或近似：先不落盘，交由会话确认（相同默认建议更新状态）
     if hits and not args.force:
         if exact_hits:
-            _print_dup_hits(exact_hits, title="检测到相同任务（默认应更新状态，勿新建）：")
+            _print_dup_hits(exact_hits, title="Identical todo found (default: update its status, do not create a new one):")
             if similar_hits:
-                _print_dup_hits(similar_hits, title="同时发现近似任务：")
-            print("确认更新请加：--update-id <id>（默认推荐）；确认仍要新建请加：--force")
+                _print_dup_hits(similar_hits, title="Also found similar todos:")
+            print("To confirm the update add: --update-id <id> (recommended); to force-create add: --force")
         else:
-            _print_dup_hits(similar_hits, title="检测到近似任务，请确认后再操作：")
-            print("确认更新请加：--update-id <id>；确认仍要新建请加：--force")
+            _print_dup_hits(similar_hits, title="Similar todo found, please confirm before proceeding:")
+            print("To update add: --update-id <id>; to force-create add: --force")
         return EXIT_NEEDS_CONFIRM
 
     data = load_file(date)
@@ -1650,7 +1650,7 @@ def cmd_add(args, now=None):
     # 新任务的依赖校验：存在性 + 硬检查（新建即以 进行中/结束 起步时同样受依赖约束）
     missing = _missing_deps(task.get("depends_on") or [])
     if missing:
-        print("错误：以下依赖任务不存在：%s" % "; ".join(missing), file=sys.stderr)
+        print("Error: dependency task(s) not found: %s" % "; ".join(missing), file=sys.stderr)
         return 2
     rc = _guard_by_deps(task.get("depends_on"), task["status"], args.force)
     if rc != 0:
@@ -1658,12 +1658,12 @@ def cmd_add(args, now=None):
     # 新任务的父任务校验：存在性（新建任务尚无父子环）
     parent = _norm(task.get("parent"))
     if parent and _find_task(parent)[2] is None:
-        print("错误：父任务 %s 不存在。" % parent, file=sys.stderr)
+        print("Error: parent task %s not found." % parent, file=sys.stderr)
         return 2
     data["tasks"].append(task)
     save_file(date, data["archived"], data["tasks"])
     idx = build_index(now)
-    prefix = "已强制新建" if args.force else "已添加"
+    prefix = "force-created" if args.force else "added"
     _print_task_summary(prefix, tid, date, task, idx)
     # 没给标签时才推测：只给建议，不写入——由 AI 拿着建议问用户，确认后再用 --update-id 落库
     if not _split_list_field(args.tags):
@@ -1672,7 +1672,7 @@ def cmd_add(args, now=None):
         if sug["suggestions"]:
             _print_tag_suggestion(tid, sug["suggestions"])
             for line in sug["reason"]["evidence"][:TAG_MAX_SUGGEST]:
-                print("    依据: %s" % line)
+                print("    evidence: %s" % line)
     return 0
 
 
@@ -1680,7 +1680,7 @@ def cmd_suggest_tags(args):
     """只读推测标签（JSON），供 AI 在建任务之前先问用户，不必先建后改。"""
     text = _norm(args.text)
     if not text:
-        print("错误：必须提供 --text。", file=sys.stderr)
+        print("Error: --text is required.", file=sys.stderr)
         return 2
     res = _suggest_tags(text, args.note or "", args.workspace or "")
     print(json.dumps({
@@ -1697,15 +1697,15 @@ def cmd_check(args):
     """检查文本是否与已有任务相同/近似（只读，不落盘）。"""
     text = _norm(args.text)
     if not text:
-        print("错误：必须提供 --text。", file=sys.stderr)
+        print("Error: --text is required.", file=sys.stderr)
         return 2
     hits = find_duplicates(text, exclude_id=args.exclude_id or None)
     if not hits:
-        print("无重复或近似任务")
+        print("No duplicate or similar todos")
         return 0
     _print_dup_hits(hits)
     exact_n = sum(1 for h in hits if h["kind"] == "exact")
-    print("合计：相同 %d，近似 %d" % (exact_n, len(hits) - exact_n))
+    print("total: exact %d, similar %d" % (exact_n, len(hits) - exact_n))
     return EXIT_NEEDS_CONFIRM if hits else 0
 
 
@@ -1776,15 +1776,15 @@ def _guard_by_deps(dep_ids, target_status, force):
     for did in dep_ids or []:
         ddate, _, dtask = _find_task(did)
         if dtask is None:
-            conflicts.append({"id": did, "status": "(不存在)", "text": "", "date": ""})
+            conflicts.append({"id": did, "status": "(missing)", "text": "", "date": ""})
         elif dtask["status"] != "结束":
             conflicts.append({"id": did, "status": dtask["status"], "text": dtask["text"], "date": ddate})
     if conflicts:
-        print("依赖检查未通过（前置依赖尚未结束，不能推进到「%s」）：" % target_status)
+        print("Dependency check failed (prerequisites not finished; cannot advance to “%s”):" % target_status)
         for c in conflicts:
             print("  - %s [%s] %s %s" % (c["id"], c["status"], c["date"], c["text"]))
-        print("提示：如需强行推进请加 --force（由会话中的 AI 在用户确认后调用）；"
-              "或先处理未完成的依赖任务。")
+        print("Hint: add --force to force advance (run by the AI after the user confirms); "
+              "or finish the prerequisite tasks first.")
         return EXIT_NEEDS_CONFIRM
     return 0
 
@@ -1818,11 +1818,11 @@ def _guard_children_done(tid, target_status, force):
         return 0
     unfinished = [(date, t) for date, t in _children_of(tid) if t["status"] != "结束"]
     if unfinished:
-        print("子任务检查未通过（存在未完成的子任务，不能将父任务标记为「结束」）：")
+        print("Subtask check failed (unfinished subtasks exist; the parent cannot be marked done):")
         for date, t in unfinished:
             print("  - %s [%s] %s %s" % (t["id"], t["status"], date, t["text"]))
-        print("提示：如需强行结束请加 --force（由会话中的 AI 在用户确认后调用）；"
-              "或先完成子任务。")
+        print("Hint: add --force to force-finish (run by the AI after the user confirms); "
+              "or finish the subtasks first.")
         return EXIT_NEEDS_CONFIRM
     return 0
 
@@ -1832,21 +1832,21 @@ def cmd_children(args):
     pid = args.id
     _, _, pt = _find_task(pid)
     if pt is None:
-        print("未找到父任务 %s" % pid, file=sys.stderr)
+        print("Parent task %s not found" % pid, file=sys.stderr)
         return 2
     children = _children_of(pid)
     children.sort(key=lambda c: (c[1].get("created") or ""))
-    print("父任务 %s：%s（%d 个子任务）" % (pid, pt["text"], len(children)))
+    print("Parent %s: %s (%d subtask(s))" % (pid, pt["text"], len(children)))
     for date, t in children:
         flag = STATUS_MARKS.get(t["status"], "[ ]")
         urgent_mark = "!" if _is_urgent(t, dt.datetime.now()) else " "
         print("  %s %s [%s%s] %s · %s · %s" % (
             t["id"], flag, urgent_mark, t["importance"], t["text"],
-            t["due"] or "无截止", t["status"]))
+            t["due"] or "no due", t["status"]))
         if t.get("depends_on"):
-            print("     依赖: %s" % "; ".join(t["depends_on"]))
+            print("     deps: %s" % "; ".join(t["depends_on"]))
     if not children:
-        print("  （无子任务）")
+        print("  (no subtasks)")
     return 0
 
 
@@ -1854,10 +1854,10 @@ def cmd_deparent(args):
     """解除子任务与父任务的归属关系。"""
     date, data, t = _find_task(args.id)
     if t is None:
-        print("未找到任务 %s" % args.id, file=sys.stderr)
+        print("Task %s not found" % args.id, file=sys.stderr)
         return 2
     if not t.get("parent"):
-        print("%s 当前没有父任务。" % args.id)
+        print("%s has no parent task." % args.id)
         return 0
     parent_id = t["parent"]
     t["parent"] = ""
@@ -1865,7 +1865,7 @@ def cmd_deparent(args):
     data["archived"] = all(x["status"] == "结束" for x in data["tasks"])
     save_file(date, data["archived"], data["tasks"])
     build_index()
-    print("%s 已从父任务 %s 下解除归属。" % (args.id, parent_id))
+    print("%s detached from parent %s." % (args.id, parent_id))
     return 0
 
 
@@ -1879,7 +1879,7 @@ def cmd_dep(args):
     任何改动都会做存在性校验与循环依赖检测。"""
     date, data, t = _find_task(args.id)
     if t is None:
-        print("未找到任务 %s" % args.id, file=sys.stderr)
+        print("Task %s not found" % args.id, file=sys.stderr)
         return 2
 
     deps = list(t.get("depends_on") or [])
@@ -1902,13 +1902,13 @@ def cmd_dep(args):
 
     missing = _missing_deps(deps)
     if missing:
-        print("错误：以下依赖任务不存在：%s" % "; ".join(missing), file=sys.stderr)
+        print("Error: dependency task(s) not found: %s" % "; ".join(missing), file=sys.stderr)
         return 2
     if args.id in deps:
-        print("错误：任务不能依赖自身（%s）。" % args.id, file=sys.stderr)
+        print("Error: a task cannot depend on itself (%s)." % args.id, file=sys.stderr)
         return 2
     if _would_create_cycle(args.id, deps):
-        print("错误：该依赖设置会形成循环依赖（%s 间接依赖自身）。" % args.id, file=sys.stderr)
+        print("Error: this dependency would create a cycle (%s would indirectly depend on itself)." % args.id, file=sys.stderr)
         return 2
 
     changed = deps != (t.get("depends_on") or [])
@@ -1919,20 +1919,20 @@ def cmd_dep(args):
         save_file(date, data["archived"], data["tasks"])
         build_index()
 
-    print("%s 依赖（%d 条）：" % (args.id, len(deps)))
+    print("%s dependencies (%d):" % (args.id, len(deps)))
     for did in deps:
         ddate, _, dtask = _find_task(did)
-        print("  - %s [%s] %s %s" % (did, dtask["status"] if dtask else "(不存在)",
+        print("  - %s [%s] %s %s" % (did, dtask["status"] if dtask else "(missing)",
                                      ddate, dtask["text"] if dtask else ""))
     if not deps:
-        print("  （无依赖）")
+        print("  (no dependencies)")
     return 0
 
 
 def _set_status(tid, status, force=False):
     date, data, t = _find_task(tid)
     if t is None:
-        print("未找到任务 %s" % tid, file=sys.stderr)
+        print("Task %s not found" % tid, file=sys.stderr)
         return 2
     rc = _guard_by_deps(t.get("depends_on"), status, force)
     if rc != 0:
@@ -1946,11 +1946,11 @@ def _set_status(tid, status, force=False):
     all_done = all(x["status"] == "结束" for x in data["tasks"])
     data["archived"] = all_done
     save_file(date, data["archived"], data["tasks"])
-    msg = "%s -> %s（%s）" % (tid, status, t["text"])
+    msg = "%s -> %s (%s)" % (tid, status, t["text"])
     if status == "结束" and all_done:
-        msg += "；该文件全部完成，已标记归档"
+        msg += "; all tasks in this file are done; file marked archived"
     elif status != "结束" and not all_done:
-        msg += "；已取消归档标记"
+        msg += "; archived mark cleared"
     build_index()
     print(msg)
     return 0
@@ -1960,7 +1960,7 @@ def cmd_work(args):
     """继续一个待办：标记进行中，若有工作区目录则用配置好的编辑器打开。"""
     date, data, t = _find_task(args.id)
     if t is None:
-        print("未找到任务 %s" % args.id, file=sys.stderr)
+        print("Task %s not found" % args.id, file=sys.stderr)
         return 2
     rc = _guard_by_deps(t.get("depends_on"), "进行中", args.force)
     if rc != 0:
@@ -1971,21 +1971,21 @@ def cmd_work(args):
     data["archived"] = all_done
     save_file(date, data["archived"], data["tasks"])
     build_index()
-    print("已标记进行中：%s %s" % (args.id, t["text"]))
+    print("Marked in progress: %s %s" % (args.id, t["text"]))
     ws = _norm(t.get("workspace"))
     if ws:
-        label = _norm(_editor_config().get("label")) or "编辑器"
+        label = _norm(_editor_config().get("label")) or "editor"
         ok, msg = open_editor(ws)
         if ok:
-            print("已用 %s 打开工作区：%s" % (label, ws))
+            print("Opened workspace with %s: %s" % (label, ws))
         else:
             # work 的主职责（标记进行中）已经完成，这里只报错 + 给配置出口，不改返回码
-            print("打开编辑器失败：%s" % msg, file=sys.stderr)
-            print("工作区目录：%s" % ws, file=sys.stderr)
-            print("配置编辑器：%s env --set editor.path=\"<编辑器可执行文件绝对路径>\""
+            print("Failed to open editor: %s" % msg, file=sys.stderr)
+            print("Workspace dir: %s" % ws, file=sys.stderr)
+            print("Configure the editor: %s env --set editor.path=\"<absolute path to editor executable>\""
                   % _script_cmd(), file=sys.stderr)
     else:
-        print("该待办未设置工作区目录，未打开编辑器。")
+        print("This todo has no workspace directory; editor was not opened.")
     return 0
 
 
@@ -2004,19 +2004,20 @@ def cmd_reopen(args):
 def cmd_archive(args):
     date = args.date
     if not re.match(r"^\d{4}-\d{2}-\d{2}$", date):
-        print("错误：date 需为 YYYY-MM-DD", file=sys.stderr)
+        print("Error: date must be YYYY-MM-DD", file=sys.stderr)
         return 2
     if not os.path.exists(_file_path(date)):
-        print("文件不存在：%s" % _file_path(date), file=sys.stderr)
+        print("File not found: %s" % _file_path(date), file=sys.stderr)
         return 2
     data = load_file(date)
     if data["tasks"] and not all(t["status"] == "结束" for t in data["tasks"]):
-        print("仍有未完成任务，拒绝强制归档（先完成或 reopen）。可手动编辑文件。", file=sys.stderr)
+        print("Unfinished tasks remain; refusing to force-archive (finish them or reopen first). "
+              "You may edit the file manually.", file=sys.stderr)
         return 2
     data["archived"] = True
     save_file(date, True, data["tasks"])
     build_index()
-    print("已归档 %s" % date)
+    print("Archived %s" % date)
     return 0
 
 
@@ -2025,7 +2026,7 @@ def cmd_postpone(args):
     时间交给 parse_due 解析，解析不了就报错并保持不变——绝不猜一个日期。"""
     date, data, t = _find_task(args.id)
     if t is None:
-        print("未找到任务 %s" % args.id, file=sys.stderr)
+        print("Task %s not found" % args.id, file=sys.stderr)
         return 2
     old = t.get("due")
     if args.clear:
@@ -2034,17 +2035,18 @@ def cmd_postpone(args):
         now = dt.datetime.now()
         nd = parse_due(args.due, now)
         if nd is None:
-            print("错误：未识别时间「%s」，截止日未改动。" % args.due, file=sys.stderr)
-            print("可写：明天 / 周五 / 3天后 / 2026-10-20 10:00 / --clear 取消截止", file=sys.stderr)
+            print("Error: unrecognized time “%s”; deadline unchanged." % args.due, file=sys.stderr)
+            print("Accepted: 明天 / 周五 / 3天后 / 2026-10-20 10:00 / --clear to remove the deadline",
+                  file=sys.stderr)
             return 2
         t["due"] = nd
     t["updated"] = _fmt(dt.datetime.now())
     data["archived"] = all(x["status"] == "结束" for x in data["tasks"])
     save_file(date, data["archived"], data["tasks"])
     idx = build_index()
-    print("已调整计划：%s %s" % (t["id"], t["text"]))
-    print("  截止: %s -> %s" % (old or "无截止", t["due"] or "无截止"))
-    print("  索引已更新：todo=%d in_progress=%d urgent=%d overdue=%d" % (
+    print("Rescheduled: %s %s" % (t["id"], t["text"]))
+    print("  due: %s -> %s" % (old or "no due", t["due"] or "no due"))
+    print("  index updated: todo=%d in_progress=%d urgent=%d overdue=%d" % (
         idx["summary"]["todo"], idx["summary"]["in_progress"],
         idx["summary"]["urgent"], idx["summary"]["overdue"]))
     return 0
@@ -2063,15 +2065,16 @@ def cmd_migrate(args):
         except Exception:
             cur_idx_version = None
     if not outdated and cur_idx_version == SCHEMA_VERSION:
-        print("已是最新 schema v%d（%d 个存储文件），无需迁移。" % (SCHEMA_VERSION, len(files)))
+        print("Already on the latest schema v%d (%d storage file(s)); nothing to migrate."
+              % (SCHEMA_VERSION, len(files)))
         return 0
-    print("当前 schema v%d，以下 %d 个文件需要迁移：" % (SCHEMA_VERSION, len(outdated)))
+    print("Current schema v%d; the following %d file(s) need migration:" % (SCHEMA_VERSION, len(outdated)))
     for d in outdated:
         print("  %s.md  v%s -> v%d" % (d, files[d].get("schema") or 1, SCHEMA_VERSION))
     if cur_idx_version != SCHEMA_VERSION:
-        print("  index.json  v%s -> v%d" % (cur_idx_version or "无", SCHEMA_VERSION))
+        print("  index.json  v%s -> v%d" % (cur_idx_version or "none", SCHEMA_VERSION))
     if not args.apply:
-        print("（预览模式，未改动任何文件；确认后加 --apply）")
+        print("(preview mode; nothing changed — add --apply to run)")
         return 0
     n = 0
     for d in outdated:
@@ -2079,7 +2082,7 @@ def cmd_migrate(args):
         save_file(d, data["archived"], data["tasks"])
         n += 1
     idx = build_index()  # 顺带把 index.json 升到当前版本
-    print("已迁移 %d 个存储文件；index.json schema_version=%s" % (n, idx.get("schema_version")))
+    print("Migrated %d storage file(s); index.json schema_version=%s" % (n, idx.get("schema_version")))
     return 0
 
 
@@ -2089,26 +2092,26 @@ def cmd_monthly_archive(args):
     now = dt.datetime.now()
     months = [args.month] if args.month else None
     if args.month and not re.match(r"^\d{4}-\d{2}$", args.month):
-        print("错误：--month 需为 YYYY-MM", file=sys.stderr)
+        print("Error: --month must be YYYY-MM", file=sys.stderr)
         return 2
     plan = _monthly_archive(now=now, months=months,
                             include_current=bool(args.all), dry_run=bool(args.dry_run))
     if not plan:
-        print("没有可归档的记录（需满足：日文件内全部任务已结束%s）。"
-              % ("" if args.all else "，且月份早于当前月"))
+        print("No archivable records (requires: all tasks in the day file finished%s)."
+              % ("" if args.all else " and the month earlier than the current month"))
         return 0
-    prefix = "将归档" if args.dry_run else "已归档"
+    prefix = "Will archive" if args.dry_run else "Archived"
     total_files = sum(len(p["files"]) for p in plan)
     total_tasks = sum(p["tasks"] for p in plan)
-    print("%s %d 个月份、%d 个日文件、%d 条记录：" % (prefix, len(plan), total_files, total_tasks))
+    print("%s %d month(s), %d day file(s), %d record(s):" % (prefix, len(plan), total_files, total_tasks))
     for p in plan:
-        print("  - %s：%d 个文件（%s），%d 条 -> storage/archive/%s.md"
+        print("  - %s: %d file(s) (%s), %d record(s) -> storage/archive/%s.md"
               % (p["month"], len(p["files"]), "; ".join(p["files"]), p["tasks"], p["month"]))
     if args.dry_run:
-        print("（预览模式，未改动；去掉 --dry-run 执行）")
+        print("(preview mode; nothing changed — run without --dry-run to apply)")
         return 0
     idx = build_index(now)
-    print("月度归档文件：%d 个，归档记录 %d 条；当前待办索引 total=%d"
+    print("Monthly archives: %d file(s), %d archived record(s); current index total=%d"
           % (idx["summary"]["monthly_archives"], idx["summary"]["archived_tasks"],
              idx["summary"]["total"]))
     return 0
@@ -2141,33 +2144,33 @@ def cmd_list(args, now=None):
             od = _overdue_days(t, now)
             tail = ""
             if od is not None:
-                tail = " · 逾期 %d 天" % od
+                tail = " · overdue %d day(s)" % od
             lines.append("%s %s %s [%s%s] %s · %s · %s%s"
                          % (t["id"], date, flag, urgent_mark, t["importance"], t["text"],
-                            t["due"] or "无截止", t["status"], tail))
+                            t["due"] or "no due", t["status"], tail))
             if reason:
-                lines.append("   置顶: %s" % reason)
+                lines.append("   pinned: %s" % reason)
             if od is not None:
-                lines.append("   出口: 立即推进 start/done %s；调整计划 postpone %s <新时间>"
+                lines.append("   exits: advance now start/done %s; reschedule postpone %s <new time>"
                              % (t["id"], t["id"]))
             if t.get("note"):
-                lines.append("   备注: %s" % t["note"])
+                lines.append("   note: %s" % t["note"])
             if t.get("blocker") or t.get("counter"):
-                lines.append("   预案: 障碍「%s」→ 对策「%s」"
-                             % (t.get("blocker") or "（未填）", t.get("counter") or "（未填）"))
+                lines.append("   plan: blocker “%s” → counter “%s”"
+                             % (t.get("blocker") or "(not set)", t.get("counter") or "(not set)"))
             if t.get("parent"):
-                lines.append("   父任务: %s" % t["parent"])
+                lines.append("   parent: %s" % t["parent"])
             if t.get("depends_on"):
-                blocked = "（被依赖阻塞）" if _has_unfinished_deps(t) else ""
-                lines.append("   依赖: %s%s" % ("; ".join(t["depends_on"]), blocked))
+                blocked = " (blocked by dependencies)" if _has_unfinished_deps(t) else ""
+                lines.append("   deps: %s%s" % ("; ".join(t["depends_on"]), blocked))
             if t.get("tags"):
-                lines.append("   标签: %s" % "; ".join(t["tags"]))
+                lines.append("   tags: %s" % "; ".join(t["tags"]))
             if t.get("workspace"):
-                lines.append("   工作空间: %s" % t["workspace"])
+                lines.append("   workspace: %s" % t["workspace"])
             if t.get("links"):
-                lines.append("   链接: %s" % "; ".join(t["links"]))
+                lines.append("   links: %s" % "; ".join(t["links"]))
     if not lines:
-        print("（无 %s 状态的任务）" % state)
+        print("(no todos with state %s)" % state)
         return 0
     print("\n".join(lines))
     return 0
@@ -2178,8 +2181,8 @@ def cmd_show(args):
     if re.match(r"^\d{4}-\d{2}$", tid):
         # 月度归档文件
         data = _load_archive(tid)
-        print("# 归档 %s（来源文件: %s，共 %d 条）" % (
-            tid, "; ".join(data["source_files"]) or "无", len(data["tasks"])))
+        print("# Archive %s (source files: %s, %d record(s))" % (
+            tid, "; ".join(data["source_files"]) or "none", len(data["tasks"])))
         for t in data["tasks"]:
             print(_write_block(t))
             print("")
@@ -2187,30 +2190,30 @@ def cmd_show(args):
     if re.match(r"^\d{4}-\d{2}-\d{2}$", tid):
         date = tid
         fdata = load_file(date)
-        print("# 待办 %s（归档: %s，schema: v%s）" % (date, fdata["archived"], fdata["schema"]))
+        print("# Todos %s (archived: %s, schema: v%s)" % (date, fdata["archived"], fdata["schema"]))
         for t in fdata["tasks"]:
             print(_write_block(t))
             print("")
         return 0
     date, data, t = _find_task(tid)
     if t is None:
-        print("未找到任务 %s" % tid, file=sys.stderr)
+        print("Task %s not found" % tid, file=sys.stderr)
         return 2
     now = dt.datetime.now()
-    print("文件: %s（归档: %s，schema: v%s）" % (date, data["archived"], data["schema"]))
+    print("file: %s (archived: %s, schema: v%s)" % (date, data["archived"], data["schema"]))
     print(_write_block(t))
     # 派生指标：算不出来的一律显示「—」/「暂无推算」，不编数字
     od, dd, sd = _overdue_days(t, now), _due_in_days(t, now), _stall_days(t, now)
     pf = _projected_finish(t, now)
     print("")
-    print("逾期天数: %s | 距截止: %s | 停滞天数: %s"
+    print("overdue days: %s | due in: %s | stalled days: %s"
           % (_days_unknown(od), _days_unknown(dd), _days_unknown(sd)))
-    print("预计完成日: %s" % (pf or "暂无推算（缺少进展记录）"))
+    print("projected finish: %s" % (pf or "N/A (no progress records)"))
     pin, reason = _pin_info(t, now)
     if pin is not None:
-        print("置顶: %s" % reason)
+        print("pinned: %s" % reason)
     if od is not None:
-        print("出口: 立即推进 → start/done %s；调整计划 → postpone %s <新时间>" % (tid, tid))
+        print("exits: advance now → start/done %s; reschedule → postpone %s <new time>" % (tid, tid))
     return 0
 
 
@@ -2282,49 +2285,50 @@ def cmd_init(args):
             env["editor"] = detected
     _save_env(env)
     n = _reformat_all_workspaces(env["path_style"])
-    print("已识别并保存工作环境 -> %s" % ENV_PATH)
+    print("Environment detected and saved -> %s" % ENV_PATH)
     print(json.dumps(env, ensure_ascii=False, indent=2))
     if n:
-        print("已将 %d 个存储文件中的工作空间统一为 %s 格式" % (n, env["path_style"]))
+        print("Normalized workspace paths in %d storage file(s) to %s format" % (n, env["path_style"]))
     else:
-        print("工作空间已统一为 %s 格式" % env["path_style"])
-    print("生效的存储目录：%s" % _storage_dir())
+        print("Workspace paths normalized to %s format" % env["path_style"])
+    print("Effective storage directory: %s" % _storage_dir())
     st = editor_status()
     if st["available"]:
-        print("已探测到编辑器：%s（%s）" % (st["label"] or "已配置", st["path"]))
+        print("Editor detected: %s (%s)" % (st["label"] or "configured", st["path"]))
     else:
-        print("未探测到可用编辑器（%s）；需要「用编辑器打开工作区」时请配置：" % st["error"])
-        print("  %s env --set editor.path=\"<编辑器可执行文件绝对路径>\"" % _script_cmd())
+        print("No usable editor detected (%s); configure one if you need “open workspace in editor”:"
+              % st["error"])
+        print("  %s env --set editor.path=\"<absolute path to editor executable>\"" % _script_cmd())
     return 0
 
 
 def _resolve_storage_setting(v):
     """把用户给的存储目录配置解析成绝对路径并校验可写。返回 (abs_path, error)。"""
     if not v:
-        return None, "storage_dir 不能为空"
+        return None, "storage_dir must not be empty"
     p = os.path.abspath(os.path.expanduser(os.path.expandvars(v)))
     try:
         os.makedirs(p, exist_ok=True)
     except Exception as e:  # noqa: BLE001
-        return None, "无法创建存储目录 %s：%s" % (p, e)
+        return None, "Cannot create storage directory %s: %s" % (p, e)
     if not os.access(p, os.W_OK):
-        return None, "存储目录不可写：%s" % p
+        return None, "Storage directory not writable: %s" % p
     return p, None
 
 
 def _resolve_editor_path(v):
     """校验编辑器 path：含分隔符按文件路径校验存在；否则按命令名校验在 PATH 中。"""
     if not v:
-        return "editor.path 不能为空"
+        return "editor.path must not be empty"
     p = os.path.expanduser(os.path.expandvars(v))
     seps = [s for s in (os.sep, os.altsep) if s]
     if os.path.isabs(p) or any(s in p for s in seps):
         if not os.path.isfile(p):
-            return "编辑器文件不存在：%s" % p
+            return "Editor file not found: %s" % p
         return None
     import shutil
     if not shutil.which(p):
-        return "命令 %s 不在 PATH 中（可改填编辑器可执行文件的绝对路径）" % p
+        return "Command %s not found in PATH (you can set the absolute path to the editor executable instead)" % p
     return None
 
 
@@ -2358,19 +2362,19 @@ def cmd_env(args):
     new_storage = None
     for kv in args.set or []:
         if "=" not in kv:
-            print("错误：--set 需为 KEY=VALUE 形式，例如 path_style=windows", file=sys.stderr)
+            print("Error: --set must be KEY=VALUE, e.g. path_style=windows", file=sys.stderr)
             return 2
         k, _, v = kv.partition("=")
         k, v = k.strip(), v.strip()
         if k == "path_style":
             if v not in _PATH_STYLES:
-                print("错误：path_style 仅支持 %s" % " / ".join(_PATH_STYLES), file=sys.stderr)
+                print("Error: path_style only supports %s" % " / ".join(_PATH_STYLES), file=sys.stderr)
                 return 2
             env["path_style"] = v
         elif k == "storage_dir":
             abs_p, err = _resolve_storage_setting(v)
             if err:
-                print("错误：%s" % err, file=sys.stderr)
+                print("Error: %s" % err, file=sys.stderr)
                 return 2
             env.setdefault("dirs", {})["storage_dir"] = abs_p
             new_storage = abs_p
@@ -2381,47 +2385,47 @@ def cmd_env(args):
             elif ek == "path":
                 err = _resolve_editor_path(v)
                 if err:
-                    print("错误：%s" % err, file=sys.stderr)
+                    print("Error: %s" % err, file=sys.stderr)
                     return 2
                 env.setdefault("editor", {})["path"] = v
             elif ek == "args":
                 env.setdefault("editor", {})["args"] = v
             else:
-                print("错误：不支持的编辑器配置键 %s（支持 editor.path / editor.label / editor.args）"
+                print("Error: unsupported editor config key %s (supported: editor.path / editor.label / editor.args)"
                       % k, file=sys.stderr)
                 return 2
         elif k.startswith("defaults."):
             # 覆盖新增待办的默认值（只是预填，任何时候都能改）
             dk = k[len("defaults."):]
             if dk not in DEFAULT_KEYS:
-                print("错误：不支持的默认值键 %s（支持 %s）" % (k, " / ".join(
+                print("Error: unsupported defaults key %s (supported: %s)" % (k, " / ".join(
                     "defaults." + x for x in DEFAULT_KEYS)), file=sys.stderr)
                 return 2
             allowed = {"status": STATUS_SET, "importance": IMPORTANCE_SET, "urgent": URGENT_SET}[dk]
             if v not in allowed:
-                print("错误：defaults.%s 仅支持 %s" % (dk, " / ".join(sorted(allowed))), file=sys.stderr)
+                print("Error: defaults.%s only supports %s" % (dk, " / ".join(sorted(allowed))), file=sys.stderr)
                 return 2
             env.setdefault("defaults", {})[dk] = v
         elif k.startswith("ui."):
             uk = k[len("ui."):]
             if uk == "port":
                 if not re.fullmatch(r"\d{1,5}", v) or not (1 <= int(v) <= 65535):
-                    print("错误：ui.port 需为 1-65535 的端口号", file=sys.stderr)
+                    print("Error: ui.port must be a port number from 1 to 65535", file=sys.stderr)
                     return 2
                 env.setdefault("ui", {})["port"] = int(v)
             elif uk == "prompt":
                 if v not in ("ask", "off"):
-                    print("错误：ui.prompt 仅支持 ask（默认，未启动时询问）/ off（关闭）",
+                    print("Error: ui.prompt only supports ask (default; prompt when not running) / off (disabled)",
                           file=sys.stderr)
                     return 2
                 env.setdefault("ui", {})["prompt"] = v
             else:
-                print("错误：不支持的网页 UI 配置键 %s（支持 ui.port / ui.prompt）" % k,
+                print("Error: unsupported web UI config key %s (supported: ui.port / ui.prompt)" % k,
                       file=sys.stderr)
                 return 2
         else:
-            print("错误：不支持的配置键 %s（支持 path_style / storage_dir / editor.path / "
-                  "editor.label / editor.args / defaults.* / ui.port / ui.prompt）" % k, file=sys.stderr)
+            print("Error: unsupported config key %s (supported: path_style / storage_dir / editor.path / "
+                  "editor.label / editor.args / defaults.* / ui.port / ui.prompt)" % k, file=sys.stderr)
             return 2
     # 存储目录变更：旧目录还有待办时必须让用户显式二选一，不能悄悄改配置把数据落下
     storage_changed = bool(new_storage) and os.path.abspath(new_storage) != os.path.abspath(old_storage)
@@ -2429,12 +2433,12 @@ def cmd_env(args):
     if storage_changed:
         old_files, old_tasks = _storage_file_stats(old_storage)
         if old_files and not (args.migrate or args.no_migrate):
-            print("错误：旧存储目录仍有 %d 个文件（%d 条待办）：%s"
+            print("Error: the old storage directory still has %d file(s) (%d todo(s)): %s"
                   % (old_files, old_tasks, old_storage), file=sys.stderr)
-            print("请明确选一个（配置尚未改动）：", file=sys.stderr)
-            print("  连数据一起搬：%s env --set storage_dir=\"%s\" --migrate"
+            print("Choose one explicitly (config unchanged so far):", file=sys.stderr)
+            print("  move data too: %s env --set storage_dir=\"%s\" --migrate"
                   % (_script_cmd(), new_storage), file=sys.stderr)
-            print("  只改配置不搬：%s env --set storage_dir=\"%s\" --no-migrate"
+            print("  config only, keep data: %s env --set storage_dir=\"%s\" --no-migrate"
                   % (_script_cmd(), new_storage), file=sys.stderr)
             return 2
     if args.reset or args.set:
@@ -2444,43 +2448,43 @@ def cmd_env(args):
         if args.migrate:
             ok, msg = _migrate_storage(old_storage, new_storage)
             if ok:
-                print("搬迁完成：%s" % msg)
+                print("Migration done: %s" % msg)
                 build_index()
             else:
                 # 搬迁失败就把配置回滚，绝不留下「指向空目录」的假状态
                 env.setdefault("dirs", {})["storage_dir"] = old_storage
                 env["updated"] = _fmt(dt.datetime.now())
                 _save_env(env)
-                print("搬迁未完成：%s" % msg, file=sys.stderr)
-                print("配置已回滚到原目录：%s" % old_storage, file=sys.stderr)
+                print("Migration incomplete: %s" % msg, file=sys.stderr)
+                print("Config rolled back to the original directory: %s" % old_storage, file=sys.stderr)
                 return 1
         else:
-            print("已改配置，未搬迁；旧目录仍有 %d 个文件（%d 条待办）：%s"
+            print("Config changed, data not migrated; the old directory still has %d file(s) (%d todo(s)): %s"
                   % (old_files, old_tasks, old_storage))
     reformat_n = 0
     if args.reformat_workspaces:
         reformat_n = _reformat_all_workspaces(env.get("path_style"))
     out = {k: v for k, v in env.items() if not k.startswith("_")}
     print(json.dumps(out, ensure_ascii=False, indent=2))
-    print("生效的默认值（新增待办时预填，可随时覆盖）：")
+    print("Effective defaults (prefilled for new todos; overridable anytime):")
     print(json.dumps(_defaults_view(), ensure_ascii=False))
-    print("周口径: 周一为起点（WEEK_START_ISO=%d）" % WEEK_START_ISO)
-    print("生效的存储目录：%s" % _storage_dir())
-    print("网页 UI 服务：端口 %d；维护后检查并询问启动：%s（%s env --set ui.prompt=off 可关闭）"
-          % (_ui_port(), "开启" if _ui_prompt_enabled() else "关闭", _script_cmd()))
+    print("Week boundary: Monday is the start (WEEK_START_ISO=%d)" % WEEK_START_ISO)
+    print("Effective storage directory: %s" % _storage_dir())
+    print("Web UI service: port %d; check & ask to start after changes: %s (%s env --set ui.prompt=off to disable)"
+          % (_ui_port(), "enabled" if _ui_prompt_enabled() else "disabled", _script_cmd()))
     st = editor_status()
     if st["available"]:
-        print("生效的编辑器：%s（%s）" % (st["label"] or "已配置", st["path"]))
+        print("Effective editor: %s (%s)" % (st["label"] or "configured", st["path"]))
     else:
-        print("生效的编辑器：未配置或不可用（%s）" % st["error"])
-        print("  配置：%s env --set editor.path=\"<编辑器可执行文件绝对路径>\"" % _script_cmd())
+        print("Effective editor: not configured or unavailable (%s)" % st["error"])
+        print("  configure: %s env --set editor.path=\"<absolute path to editor executable>\"" % _script_cmd())
     if args.reformat_workspaces:
         if reformat_n:
-            print("已将 %d 个存储文件中的工作空间统一为 %s 格式" % (reformat_n, env["path_style"]))
+            print("Normalized workspace paths in %d storage file(s) to %s format" % (reformat_n, env["path_style"]))
         else:
-            print("工作空间已统一为 %s 格式" % env["path_style"])
+            print("Workspace paths normalized to %s format" % env["path_style"])
     elif env.get("_inferred"):
-        print("（提示：环境配置尚未保存，可运行 `init` 命令识别并保存。）")
+        print("(hint: environment config not saved yet; run `init` to detect and save it.)")
     return 0
 
 
@@ -2546,7 +2550,7 @@ def _start_ui_server(port=None, no_browser=False):
     port = port or _ui_port()
     server_py = _ui_server_py()
     if not os.path.exists(server_py):
-        print("网页服务脚本不存在：%s" % server_py, file=sys.stderr)
+        print("Web server script not found: %s" % server_py, file=sys.stderr)
         return False
     argv = [sys.executable, server_py]
     if port != UI_DEFAULT_PORT:
@@ -2562,7 +2566,7 @@ def _start_ui_server(port=None, no_browser=False):
     try:
         subprocess.Popen(argv, **kwargs)
     except Exception as e:
-        print("启动网页服务失败：%s" % e, file=sys.stderr)
+        print("Failed to start web server: %s" % e, file=sys.stderr)
         return False
     # 轮询确认服务真的起来了（最多约 2 秒），避免「说启动了但端口没监听」
     for _ in range(8):
@@ -2585,8 +2589,8 @@ def _ask_start_ui(port=None):
         root.withdraw()
         root.attributes("-topmost", True)
         ans = messagebox.askyesno(
-            "awam-todo 网页 UI",
-            "检测到本地网页 UI 未启动（%s）。\n是否现在启动？" % _ui_url(port))
+            "awam-todo Web UI",
+            "The local web UI is not running (%s).\nStart it now?" % _ui_url(port))
         root.destroy()
         return bool(ans)
     except Exception:
@@ -2615,111 +2619,111 @@ def _maybe_ui_prompt(args):
     choice = _ask_start_ui(port)
     if choice is None:
         # 无法弹框（无图形环境等）：只提示，不阻塞命令
-        print("提示：本地网页 UI 未启动（%s），需要时可用命令启动：%s" % (url, manual))
+        print("Note: local web UI is not running (%s); start it with: %s" % (url, manual))
         return
     if choice:
         if _start_ui_server(port):
-            print("网页 UI 已启动：%s（浏览器将自动打开）" % url)
+            print("Web UI started: %s (the browser will open automatically)" % url)
         else:
-            print("网页 UI 启动失败，可手动启动：%s" % manual, file=sys.stderr)
+            print("Failed to start web UI; start it manually: %s" % manual, file=sys.stderr)
     else:
-        print("已跳过启动网页 UI（需要时可用命令启动：%s）" % manual)
+        print("Skipped starting the web UI (start it with: %s when needed)" % manual)
 
 
 def main():
-    p = argparse.ArgumentParser(prog="awam-todo", description="输入与管理 To-Do")
+    p = argparse.ArgumentParser(prog="awam-todo", description="Capture and manage personal todos")
     sub = p.add_subparsers(dest="cmd")
 
-    pa = sub.add_parser("add", help="添加一条待办（相同则默认更新；近似则需确认）")
+    pa = sub.add_parser("add", help="add a todo (identical -> update by default; similar -> ask first)")
     pa.add_argument("--text", required=True)
     # 下列字段默认 None：更新已有任务时仅覆盖用户显式传入的项
     pa.add_argument("--importance", choices=["重要", "不重要"], default=None)
-    pa.add_argument("--urgent", choices=["紧急", "不紧急"], default=None, help="紧急程度")
+    pa.add_argument("--urgent", choices=["紧急", "不紧急"], default=None, help="urgency level")
     pa.add_argument("--status", choices=["维护", "进行中", "结束", "待开始", "其他"], default=None)
     pa.add_argument("--note", default=None)
-    pa.add_argument("--blocker", default=None, help="最容易拦住我的障碍（选填，卡片上显示）")
-    pa.add_argument("--counter", default=None, help="对策：如果障碍出现，我就……（选填）")
+    pa.add_argument("--blocker", default=None, help="the obstacle most likely to block me (optional; shown on the card)")
+    pa.add_argument("--counter", default=None, help="counter-plan: if the blocker shows up, I will … (optional)")
     pa.add_argument("--workspace", default=None)
-    pa.add_argument("--docs", default=None, help="相关文档，用 ; 分隔")
-    pa.add_argument("--links", default=None, help="链接，用 ; 分隔")
-    pa.add_argument("--deps", default=None, help="依赖任务ID，用 ; 分隔（如 T-A;T-B）")
-    pa.add_argument("--tags", default=None, help="标签，用 ; 分隔（如 工作;紧急）")
-    pa.add_argument("--parent", default=None, help="父任务ID（作为其子任务）")
-    pa.add_argument("--due", default=None, help="自然语言时间，如 明天 / 星期五 / 2026-10-05 10:00")
-    pa.add_argument("--date", default="", help="存储到指定日期文件 YYYY-MM-DD，默认今天")
-    pa.add_argument("--from-type", default="agent", help="来源类型，如 agent/link/web（默认 agent）")
-    pa.add_argument("--from-url", default=None, help="来源 URL（如 AI 对话链接），留空则不记录")
-    pa.add_argument("--force", action="store_true", help="跳过重复检测，强制新建")
-    pa.add_argument("--update-id", default="", help="确认后更新指定已有任务，不新建")
+    pa.add_argument("--docs", default=None, help="related docs, separated by ;")
+    pa.add_argument("--links", default=None, help="links, separated by ;")
+    pa.add_argument("--deps", default=None, help="dependency task IDs, separated by ; (e.g. T-A;T-B)")
+    pa.add_argument("--tags", default=None, help="tags, separated by ; (e.g. 工作;紧急)")
+    pa.add_argument("--parent", default=None, help="parent task ID (this todo becomes its subtask)")
+    pa.add_argument("--due", default=None, help="natural-language time, e.g. 明天 / 星期五 / 2026-10-05 10:00")
+    pa.add_argument("--date", default="", help="store into the given date file YYYY-MM-DD (default: today)")
+    pa.add_argument("--from-type", default="agent", help="source type, e.g. agent/link/web (default: agent)")
+    pa.add_argument("--from-url", default=None, help="source URL (e.g. an AI conversation link); omit to not record")
+    pa.add_argument("--force", action="store_true", help="skip duplicate detection and force-create")
+    pa.add_argument("--update-id", default="", help="after confirmation, update this existing todo instead of creating")
 
-    pc = sub.add_parser("check", help="检查文本是否与已有任务相同/近似（只读）")
+    pc = sub.add_parser("check", help="check whether the text is identical/similar to existing todos (read-only)")
     pc.add_argument("--text", required=True)
-    pc.add_argument("--exclude-id", default="", help="比对时排除的任务 ID")
+    pc.add_argument("--exclude-id", default="", help="task ID to exclude from comparison")
 
-    pts = sub.add_parser("suggest-tags", help="推测标签（只给建议，不写入；JSON 输出）")
-    pts.add_argument("--text", required=True, help="待办内容")
-    pts.add_argument("--note", default="", help="备注（同样作为推测依据）")
-    pts.add_argument("--workspace", default="", help="工作空间路径（同样作为推测依据）")
+    pts = sub.add_parser("suggest-tags", help="suggest tags (suggestion only, nothing is written; JSON output)")
+    pts.add_argument("--text", required=True, help="todo content")
+    pts.add_argument("--note", default="", help="note (also used as a hint)")
+    pts.add_argument("--workspace", default="", help="workspace path (also used as a hint)")
 
-    pd = sub.add_parser("done", help="完成任务（全部完成则自动归档该文件；前置依赖未结束需确认）")
+    pd = sub.add_parser("done", help="mark done (auto-archive the file when all tasks are done; unfinished deps require confirmation)")
     pd.add_argument("id")
-    pd.add_argument("--force", action="store_true", help="忽略前置依赖未完成的硬检查，强制完成")
-    ps = sub.add_parser("start", help="标记进行中（前置依赖未结束需确认）")
+    pd.add_argument("--force", action="store_true", help="ignore the unfinished-dependency check and force-done")
+    ps = sub.add_parser("start", help="mark in progress (unfinished deps require confirmation)")
     ps.add_argument("id")
-    ps.add_argument("--force", action="store_true", help="忽略前置依赖未完成的硬检查，强制进行")
+    ps.add_argument("--force", action="store_true", help="ignore the unfinished-dependency check and force-start")
     pw = sub.add_parser("work", aliases=["continue"],
-                        help="继续待办：标记进行中并用配置好的编辑器打开工作区（前置依赖未结束需确认）")
+                        help="continue: mark in progress and open the workspace with the configured editor (unfinished deps require confirmation)")
     pw.add_argument("id")
-    pw.add_argument("--force", action="store_true", help="忽略前置依赖未完成的硬检查，强制进行")
-    pr = sub.add_parser("reopen", help="重新打开")
+    pw.add_argument("--force", action="store_true", help="ignore the unfinished-dependency check and force-start")
+    pr = sub.add_parser("reopen", help="reopen (back to 待开始)")
     pr.add_argument("id")
     ppo = sub.add_parser("postpone", aliases=["reschedule", "replan"],
-                         help="调整计划：重设/清除截止日（逾期任务的第二个出口）")
+                         help="reschedule: reset/clear the deadline (the second exit for overdue todos)")
     ppo.add_argument("id")
     ppo.add_argument("due", nargs="?", default="",
-                     help="新的时间，如 明天 / 下周一 / 3天后 / 2026-10-20 10:00")
-    ppo.add_argument("--clear", action="store_true", help="清除截止日")
-    pmi = sub.add_parser("migrate", help="把旧版本存储文件迁移到当前 schema（默认预览，--apply 执行）")
-    pmi.add_argument("--apply", action="store_true", help="真正执行迁移（默认只预览）")
+                     help="new time, e.g. 明天 / 下周一 / 3天后 / 2026-10-20 10:00")
+    ppo.add_argument("--clear", action="store_true", help="clear the deadline")
+    pmi = sub.add_parser("migrate", help="migrate old storage files to the current schema (preview by default; --apply runs it)")
+    pmi.add_argument("--apply", action="store_true", help="actually run the migration (default: preview only)")
     pma = sub.add_parser("archive-month", aliases=["monthly-archive"],
-                         help="月度归档：把可归档日文件合并进 storage/archive/YYYY-MM.md")
-    pma.add_argument("--month", default="", help="指定月份 YYYY-MM；默认处理早于当前月的文件")
-    pma.add_argument("--all", action="store_true", help="含当前月份")
-    pma.add_argument("--dry-run", action="store_true", help="只预览不落盘")
-    pdep = sub.add_parser("dep", help="设置 / 查看任务依赖（含存在性与环检测）")
+                         help="monthly archive: merge archivable day files into storage/archive/YYYY-MM.md")
+    pma.add_argument("--month", default="", help="month YYYY-MM; default: files earlier than the current month")
+    pma.add_argument("--all", action="store_true", help="include the current month")
+    pma.add_argument("--dry-run", action="store_true", help="preview only, write nothing")
+    pdep = sub.add_parser("dep", help="set / view task dependencies (with existence and cycle checks)")
     pdep.add_argument("id")
-    pdep.add_argument("deps", nargs="*", help="设置（替换）依赖任务ID列表")
-    pdep.add_argument("--add", nargs="+", default=[], help="追加依赖任务ID")
-    pdep.add_argument("--remove", nargs="+", default=[], help="移除依赖任务ID")
-    pdep.add_argument("--clear", action="store_true", help="清空依赖")
-    pch = sub.add_parser("children", aliases=["sub"], help="列出某主任务下的子任务")
+    pdep.add_argument("deps", nargs="*", help="set (replace) the dependency task ID list")
+    pdep.add_argument("--add", nargs="+", default=[], help="append dependency task IDs")
+    pdep.add_argument("--remove", nargs="+", default=[], help="remove dependency task IDs")
+    pdep.add_argument("--clear", action="store_true", help="clear dependencies")
+    pch = sub.add_parser("children", aliases=["sub"], help="list subtasks of a parent task")
     pch.add_argument("id")
-    pdp = sub.add_parser("deparent", help="解除子任务与父任务的归属关系")
+    pdp = sub.add_parser("deparent", help="detach a subtask from its parent")
     pdp.add_argument("id")
-    par = sub.add_parser("archive", help="强制归档某个日期文件（须全部完成）")
+    par = sub.add_parser("archive", help="force-archive a date file (all tasks must be done)")
     par.add_argument("date")
-    pl = sub.add_parser("list", help="列出任务")
+    pl = sub.add_parser("list", help="list todos")
     pl.add_argument("--date", default="")
     pl.add_argument("--state", choices=["维护", "进行中", "结束", "待开始", "其他",
                                         "urgent", "overdue", "today", "all"], default="all")
-    psh = sub.add_parser("show", help="查看任务 / 某天文件 / 月度归档（YYYY-MM）")
+    psh = sub.add_parser("show", help="view a task / a day file / a monthly archive (YYYY-MM)")
     psh.add_argument("id")
-    pi = sub.add_parser("index", help="查看/重建索引")
+    pi = sub.add_parser("index", help="view / rebuild the index")
     pi.add_argument("--rebuild", action="store_true")
 
-    pinit = sub.add_parser("init", help="识别工作环境并保存到 env.json（路径风格 / 存储目录 / 编辑器，统一工作空间）")
-    penv = sub.add_parser("env", help="查看 / 修改已保存的环境配置（路径风格 / 存储目录 / 编辑器 / 默认值）")
+    pinit = sub.add_parser("init", help="detect the environment and save it to env.json (path style / storage dir / editor, normalize workspaces)")
+    penv = sub.add_parser("env", help="view / modify saved environment config (path style / storage dir / editor / defaults)")
     penv.add_argument("--set", action="append", default=[],
-                      help="KEY=VALUE，可多次；支持 path_style=windows|posix|mixed、"
-                           "storage_dir=<目录>、editor.path / editor.label / editor.args、"
+                      help="KEY=VALUE, repeatable; supports path_style=windows|posix|mixed, "
+                           "storage_dir=<dir>, editor.path / editor.label / editor.args, "
                            "defaults.status|defaults.importance|defaults.urgent")
     penv.add_argument("--migrate", action="store_true",
-                      help="与 --set storage_dir 同用：把旧存储目录的待办搬到新目录（先复制，校验一致后才删旧）")
+                      help="with --set storage_dir: move todos from the old directory to the new one (copy first, delete old only after verification)")
     penv.add_argument("--no-migrate", action="store_true",
-                      help="与 --set storage_dir 同用：只改配置，明确不搬迁、也不再提示")
-    penv.add_argument("--reset", action="store_true", help="重新探测环境并覆盖保存（含编辑器）")
+                      help="with --set storage_dir: change config only, explicitly do not move data and stop asking")
+    penv.add_argument("--reset", action="store_true", help="re-detect the environment and save (including the editor)")
     penv.add_argument("--reformat-workspaces", action="store_true",
-                      help="将全部存储文件中的工作空间统一为当前 path_style")
+                      help="normalize workspace paths in all storage files to the current path_style")
 
     args = p.parse_args()
     if not args.cmd:

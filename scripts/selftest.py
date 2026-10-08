@@ -48,25 +48,25 @@ def main():
                        "--counter", "拿起手机前先背 20 个", "--due", "2026-09-20")
     print(out or err)
     check("add 成功", rc == 0)
-    check("输出含障碍", "障碍: 晚上刷手机" in out)
-    check("输出含对策", "对策: 拿起手机前先背 20 个" in out)
-    check("输出含置顶理由(逾期)", "置顶: 逾期" in out)
-    check("输出含两个出口", "立即推进" in out and "调整计划" in out)
-    check("预计完成日不编造", "暂无推算" in out)
+    check("输出含障碍", "blocker: 晚上刷手机" in out)
+    check("输出含对策", "counter: 拿起手机前先背 20 个" in out)
+    check("输出含置顶理由(逾期)", "pinned: Overdue" in out)
+    check("输出含两个出口", "advance now" in out and "reschedule" in out)
+    check("预计完成日不编造", "projected finish: N/A" in out)
 
     print("== 2. 无截止任务：不得编造逾期/推算 ==")
     rc, out, err = run(tmp, "add", "--text", "整理归档策略", "--force")
-    check("无截止不产出逾期天数", "逾期" not in out)
+    check("无截止不产出逾期天数", "overdue" not in out.lower())
 
     print("== 3. 时间解析失败要报错，不静默丢弃 ==")
     rc, out, err = run(tmp, "postpone", "T-", "乱七八糟的时间")
     rc2, out2, err2 = run(tmp, "add", "--text", "带坏时间的任务", "--due", "下个世纪的某天", "--force")
-    check("坏时间有告警", "未识别时间" in (err + err2), (err + err2)[:200])
+    check("坏时间有告警", "unrecognized time" in (err + err2), (err + err2)[:200])
 
     print("== 4. 调整计划 postpone ==")
     rc, out, err = run(tmp, "postpone", "T-20260920-001" if False else _first_id(tmp), "下周一")
     print(out or err)
-    check("postpone 成功", rc == 0 and "已调整计划" in out)
+    check("postpone 成功", rc == 0 and "Rescheduled:" in out)
 
     print("== 5. 月度归档：上月全部完成的文件 ==")
     storage = os.path.join(tmp, "storage")
@@ -111,14 +111,14 @@ def main():
     rc, out, err = run(tmp, "env", "--set", "defaults.status=待开始")
     check("env --set defaults.status", rc == 0 and "待开始" in out)
     rc, out, err = run(tmp, "add", "--text", "默认状态测试", "--force")
-    check("新任务用覆盖后的默认值", "状态: 待开始" in out, out[:300])
+    check("新任务用覆盖后的默认值", "status: 待开始" in out, out[:300])
 
     # 先埋一条带标签的旧任务，供「历史标签复用」验证
     print("== 8. 标签推测：只给建议，不写入 ==")
     import json as _json
     rc, out, err = run(tmp, "add", "--text", "给甲方做方案PPT", "--tags", "客户对接", "--force")
-    check("显式传 tags 时不推测", rc == 0 and "建议标签" not in out, out[:300])
-    check("显式 tags 正常写入", "标签: 客户对接" in out, out[:300])
+    check("显式传 tags 时不推测", rc == 0 and "Suggested tags" not in out, out[:300])
+    check("显式 tags 正常写入", "tags: 客户对接" in out, out[:300])
 
     rc, out, err = run(tmp, "suggest-tags", "--text", "给甲方做方案PPT 第二版")
     hist = {}
@@ -137,7 +137,7 @@ def main():
     rc, out, err = run(tmp, "suggest-tags", "--text", "整理项目笔记", "--workspace", "D:\\proj\\my-docs")
     wsh = _json.loads(out) if rc == 0 else {}
     check("工作空间领域词参与推测", "文档" in (wsh.get("suggestions") or []), str(wsh.get("suggestions")))
-    check("建议给出依据", any("工作空间含领域词" in str(e) for e in (wsh.get("reason", {}).get("evidence") or [])),
+    check("建议给出依据", any("workspace contains" in str(e) for e in (wsh.get("reason", {}).get("evidence") or [])),
           str(wsh.get("reason")))
 
     rc, out, err = run(tmp, "suggest-tags", "--text", "换个新的台灯")
@@ -145,7 +145,7 @@ def main():
     check("无把握时返回空建议", rc == 0 and not none_hit.get("suggestions"), str(none_hit.get("suggestions")))
 
     rc, out, err = run(tmp, "add", "--text", "复习英语课程并背单词", "--force")
-    check("新建未传 tags 时给出建议", rc == 0 and "建议标签:" in out, out[:400])
+    check("新建未传 tags 时给出建议", rc == 0 and "Suggested tags:" in out, out[:400])
     check("建议标签未写入存储", "标签:" not in _task_block(tmp, "复习英语课程并背单词"),
           _task_block(tmp, "复习英语课程并背单词")[:200])
 
@@ -156,11 +156,11 @@ def main():
     # ============ QA 独立验证：标签推测的「只建议、不写入」红线 ============
     print("== 10. 红线：建议标签只出现在 stdout，绝不落盘 ==")
     rc, out, err = run(tmp, "add", "--text", "修复登录接口的 bug 并补单测", "--force")
-    check("有信号时 add 打印建议标签", rc == 0 and "建议标签:" in out, (out or err)[:400])
-    sug_lines = [l for l in out.splitlines() if "建议标签:" in l]
-    sug_body = sug_lines[0].split("建议标签:", 1)[1].split("（")[0].strip() if sug_lines else ""
+    check("有信号时 add 打印建议标签", rc == 0 and "Suggested tags:" in out, (out or err)[:400])
+    sug_lines = [l for l in out.splitlines() if "Suggested tags:" in l]
+    sug_body = sug_lines[0].split("Suggested tags:", 1)[1].split("(not written yet")[0].strip() if sug_lines else ""
     check("建议标签内容非空", bool(sug_body), str(sug_lines))
-    check("依据一并打印", "依据:" in out, (out or err)[:400])
+    check("依据一并打印", "evidence:" in out, (out or err)[:400])
     blk = _task_block(tmp, "修复登录接口的 bug 并补单测")
     check("（防假阳性）存储里确实找到了这条任务", bool(blk), blk[:120])
     check("红线：落盘 md 块里没有 标签: 字段", bool(blk) and "标签:" not in blk, blk[:300])
@@ -169,7 +169,7 @@ def main():
     tid = _task_id_of(tmp, "修复登录接口的 bug 并补单测")
     check("能取到刚建任务的 ID", bool(tid), tid)
     rc, out, err = run(tmp, "add", "--update-id", tid, "--text", "背单词并复习英语课件")
-    check("--update-id 分支不推测标签", rc == 0 and "建议标签" not in out, (out or err)[:400])
+    check("--update-id 分支不推测标签", rc == 0 and "Suggested tags" not in out, (out or err)[:400])
     rc, out2, _ = run(tmp, "suggest-tags", "--text", "背单词并复习英语课件")
     try:
         anti = _json.loads(out2)
@@ -179,14 +179,14 @@ def main():
           str(anti.get("suggestions")))
 
     rc, out, err = run(tmp, "add", "--text", "整理周报并汇报进度", "--force")
-    check("--force 正常新建", rc == 0 and "已强制新建" in out, (out or err)[:300])
-    check("--force 未传 tags 时同样给出建议", "建议标签:" in out, (out or err)[:300])
+    check("--force 正常新建", rc == 0 and "force-created" in out, (out or err)[:300])
+    check("--force 未传 tags 时同样给出建议", "Suggested tags:" in out, (out or err)[:300])
 
     # 刻意让显式传入的标签「盖不住」推测结果（学习能被盖住，英语盖不住），
     # 这样一旦推测分支被误触发，这条就会失败——否则这是条永远为真的空测试。
     rc, out, err = run(tmp, "add", "--text", "背单词打卡", "--tags", "学习;临时", "--force")
-    check("显式 --tags 时不推测", rc == 0 and "建议标签" not in out, (out or err)[:300])
-    check("显式 --tags 写入输出", "标签: 学习; 临时" in out, (out or err)[:300])
+    check("显式 --tags 时不推测", rc == 0 and "Suggested tags" not in out, (out or err)[:300])
+    check("显式 --tags 写入输出", "tags: 学习; 临时" in out, (out or err)[:300])
     blk2 = _task_block(tmp, "背单词打卡")
     check("显式 --tags 落盘到 md", bool(blk2) and "标签: 学习; 临时" in blk2, blk2[:300])
     rc, anti_out, _ = run(tmp, "suggest-tags", "--text", "背单词打卡")
@@ -199,7 +199,7 @@ def main():
 
     print("== 12. 无信号时不硬凑 ==")
     rc, out, err = run(tmp, "add", "--text", "紫色窗帘", "--force")
-    check("无信号时 add 不给建议", rc == 0 and "建议标签" not in out, (out or err)[:300])
+    check("无信号时 add 不给建议", rc == 0 and "Suggested tags" not in out, (out or err)[:300])
     rc, out, err = run(tmp, "suggest-tags", "--text", "紫色窗帘")
     try:
         none_hit2 = _json.loads(out)
@@ -250,7 +250,7 @@ def main():
     check("list 正常", rc == 0 and bool(out.strip()), (out or err)[:200])
     # check 发现重复时按「需确认」退出码返回（rc=3），属于既有约定，不能当成失败
     rc, out, err = run(tmp, "check", "--text", "背单词打卡")
-    check("check 能识别重复", rc == 3 and "相同" in out, "rc=%s | %s" % (rc, (out or err)[:200]))
+    check("check 能识别重复", rc == 3 and "exact" in out, "rc=%s | %s" % (rc, (out or err)[:200]))
 
     tid2 = _task_id_of(tmp, "整理周报并汇报进度")
     rc, out, err = run(tmp, "start", tid2)
@@ -298,7 +298,7 @@ def main():
     # ------------------------------------------------------------------
     print("== 16. 存储目录可配置（env --set storage_dir）==")
     rc, out, err = run(tmp, "env")
-    check("env 输出生效的存储目录", "生效的存储目录" in out, (out or err)[:200])
+    check("env 输出生效的存储目录", "Effective storage directory" in out, (out or err)[:200])
     default_storage = os.path.join(tmp, "storage")
     store2 = os.path.join(tmp, "store2")
     before_files = _count_md(default_storage)
@@ -319,8 +319,8 @@ def main():
                 "内容: 占位\n创建: 2026-01-01 09:00\n")
     rc, out, err = run(tmp, "env", "--set", "storage_dir=" + bad, "--migrate")
     check("校验不通过时退出码 1", rc == 1, "rc=%s" % rc)
-    check("校验不通过时明确报错", "校验不通过" in err or "校验不通过" in out, (out + err)[:300])
-    check("失败后配置回滚到原目录", "已回滚" in (err + out), (err or out)[:300])
+    check("校验不通过时明确报错", "Verification failed" in err or "Verification failed" in out, (out + err)[:300])
+    check("失败后配置回滚到原目录", "rolled back" in (err + out), (err or out)[:300])
     check("源数据未丢失", _count_md(default_storage) == before_files, str(os.listdir(default_storage)))
     check("目标目录原有文件未被破坏", os.path.isfile(os.path.join(bad, "2026-01-01.md")))
     check("失败时回删本次写入的半份副本", _count_md(bad) == 1, str(os.listdir(bad)))
@@ -329,7 +329,7 @@ def main():
     tmp3 = os.path.join(tmp, "store3")
     rc, out, err = run(tmp, "env", "--set", "storage_dir=" + tmp3, "--no-migrate")
     check("--no-migrate 退出码 0", rc == 0, (out or err)[:200])
-    check("--no-migrate 明确提示未搬迁", "未搬迁" in out, out[:300])
+    check("--no-migrate 明确提示未搬迁", "not migrated" in out, out[:300])
     check("--no-migrate 后旧目录数据仍在", _count_md(default_storage) == before_files)
     # 把配置改回原目录，好继续测真正的搬迁
     rc, out, err = run(tmp, "env", "--set", "storage_dir=" + default_storage, "--no-migrate")
@@ -338,7 +338,7 @@ def main():
     # (d) 搬迁到新目录：文件搬走、旧目录清空、任务数不变
     rc, out, err = run(tmp, "env", "--set", "storage_dir=" + store2, "--migrate")
     check("--migrate 退出码 0", rc == 0, (out or err)[:300])
-    check("输出确认搬迁完成", "搬迁完成" in out, out[:300])
+    check("输出确认搬迁完成", "Migration done:" in out, out[:300])
     check("新目录拿到全部文件", _count_md(store2) == before_files,
           "new=%d old=%d" % (_count_md(store2), before_files))
     check("旧目录已清空", _count_md(default_storage) == 0, str(os.listdir(default_storage)))
@@ -350,16 +350,16 @@ def main():
     # ------------------------------------------------------------------
     print("== 17. 编辑器可配置（env --set editor.*）==")
     rc, out, err = run(tmp, "env")
-    check("env 输出编辑器状态", "生效的编辑器" in out, (out or err)[:200])
+    check("env 输出编辑器状态", "Effective editor" in out, (out or err)[:200])
     check("未探测到时引导配置 editor.path", "editor.path" in out, out[-400:])
 
     rc, out, err = run(tmp, "env", "--set", "editor.path=" + os.path.join(tmp, "no-such-editor.exe"))
     check("editor.path 指向不存在的文件 -> 退出码 2", rc == 2, "rc=%s" % rc)
-    check("给出路径不存在的明确错误", "不存在" in err, err[:200])
+    check("给出路径不存在的明确错误", "Editor file not found" in err, err[:200])
 
     rc, out, err = run(tmp, "env", "--set", "editor.path=definitely-not-a-command-xyz")
     check("editor.path 是 PATH 里没有的命令名 -> 退出码 2", rc == 2, "rc=%s" % rc)
-    check("提示命令不在 PATH", "不在 PATH" in err, err[:200])
+    check("提示命令不在 PATH", "not found in PATH" in err, err[:200])
 
     rc, out, err = run(tmp, "env", "--set", "editor.foo=bar")
     check("未知 editor 子键被拒绝", rc == 2 and "editor." in err, (out + err)[:200])
@@ -424,7 +424,7 @@ def main():
     os.remove(fake_bak)
     if ed_id:
         rc, out, err = run(tmp, "work", ed_id)
-        check("编辑器失效时 work 仍标记进行中并返回 0", rc == 0 and "已标记进行中" in out,
+        check("编辑器失效时 work 仍标记进行中并返回 0", rc == 0 and "Marked in progress" in out,
               (out + err)[:300])
         check("编辑器失效时明确报错并给出配置命令", "editor.path" in err, err[:300])
 
@@ -437,13 +437,13 @@ def main():
     # ------------------------------------------------------------------
     print("== 18. 网页 UI 服务配置（ui.port / ui.prompt）==")
     rc, out, err = run(tmp, "env")
-    check("env 输出网页 UI 服务配置行", "网页 UI 服务" in out, (out or err)[:300])
+    check("env 输出网页 UI 服务配置行", "Web UI service" in out, (out or err)[:300])
 
     rc, out, err = run(tmp, "env", "--set", "ui.port=9000")
     check("ui.port 合法端口配置成功", rc == 0 and "9000" in out, (out or err)[:300])
 
     rc, out, err = run(tmp, "env", "--set", "ui.port=abc")
-    check("ui.port 非法值被拒绝", rc == 2 and "端口" in err, (out + err)[:200])
+    check("ui.port 非法值被拒绝", rc == 2 and "must be a port number" in err, (out + err)[:200])
 
     rc, out, err = run(tmp, "env", "--set", "ui.port=99999")
     check("ui.port 越界值被拒绝", rc == 2, (out + err)[:200])
@@ -459,7 +459,7 @@ def main():
 
     # 维护命令在 UI 检查关闭时正常返回（AWAM_TODO_UI_PROMPT=off 由 run() 默认注入）
     rc, out, err = run(tmp, "add", "--text", "网页UI联调任务", "--force")
-    check("UI 检查关闭时 add 正常且不弹框", rc == 0 and "网页 UI" not in out, (out or err)[:200])
+    check("UI 检查关闭时 add 正常且不弹框", rc == 0 and "web UI" not in out.lower(), (out or err)[:200])
 
     # 通过就清掉临时目录；失败时留下现场，便于照着失败项翻文件排查。
     # 想强制清理（或强制保留）用环境变量 AWAM_TODO_KEEP_TMP=0 / 1。

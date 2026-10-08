@@ -101,7 +101,7 @@ def _guard_conflicts(task, target_status):
                 conflicts.append({
                     "kind": "deps",
                     "id": did,
-                    "status": d.get("status") if d else "(不存在)",
+                    "status": d.get("status") if d else "(missing)",
                     "date": todo._find_task(did)[0] if d else "",
                     "text": d.get("text") if d else "",
                 })
@@ -177,22 +177,22 @@ def _apply_fields(task, fields, now, is_new, deps_resolver=None):
     deps = task.get("depends_on") or []
     missing = deps_resolver(deps) if deps_resolver else todo._missing_deps(deps)
     if missing:
-        return "以下依赖任务不存在：%s" % "; ".join(missing)
+        return "Dependency task(s) not found: %s" % "; ".join(missing)
     tid = task.get("id")
     if tid in deps:
-        return "任务不能依赖自身（%s）。" % tid
+        return "A task cannot depend on itself (%s)." % tid
     if tid and todo._would_create_cycle(tid, deps):
-        return "该依赖设置会形成循环依赖（%s 间接依赖自身）。" % tid
+        return "This dependency would create a cycle (%s would indirectly depend on itself)." % tid
 
     # 校验父任务：存在性 + 自引用 + 环
     parent = _norm(task.get("parent"))
     if parent:
         if todo._find_task(parent)[2] is None:
-            return "父任务 %s 不存在。" % parent
+            return "Parent task %s not found." % parent
         if parent == tid:
-            return "任务不能作为自身的父任务（%s）。" % tid
+            return "A task cannot be its own parent (%s)." % tid
         if tid and todo._would_create_parent_cycle(tid, parent):
-            return "该归属会形成循环（%s 成为 %s 的父任务会成环）。" % (parent, tid)
+            return "This assignment would create a cycle (%s becoming parent of %s)." % (parent, tid)
     return None
 
 def _task_view(date, t, now):
@@ -326,7 +326,7 @@ def _guard_in_memory(task, target_status, by_id):
                 conflicts.append({
                     "kind": "deps",
                     "id": did,
-                    "status": ent[1].get("status") if ent else "(不存在)",
+                    "status": ent[1].get("status") if ent else "(missing)",
                     "text": ent[1].get("text") if ent else "",
                 })
     if target_status == "结束":
@@ -358,14 +358,14 @@ def _open_dir(path):
     """在系统文件管理器中打开目录。返回 (ok, msg)。"""
     p = _resolve_workspace(path)
     if p is None:
-        return False, "路径无效或目录不存在"
+        return False, "Invalid path or directory not found"
     if sys.platform.startswith("win"):
         os.startfile(p)  # noqa: S606  打开文件管理器
     elif sys.platform == "darwin":
         subprocess.Popen(["open", p])
     else:
         subprocess.Popen(["xdg-open", p])
-    return True, "已打开目录"
+    return True, "Directory opened"
 
 
 def _open_editor(path):
@@ -376,10 +376,10 @@ def _open_editor(path):
     """
     p = _resolve_workspace(path)
     if p is None:
-        return False, "路径无效或目录不存在"
+        return False, "Invalid path or directory not found"
     cmd, err = todo.resolve_editor()
     if cmd is None:
-        return False, "%s；请用 `env --set editor.path=\"<编辑器可执行文件绝对路径>\"` 配置" % err
+        return False, "%s; configure it with `env --set editor.path=\"<absolute path to editor executable>\"`" % err
     try:
         if sys.platform.startswith("win"):
             subprocess.Popen(cmd + [p],
@@ -387,9 +387,9 @@ def _open_editor(path):
         else:
             subprocess.Popen(cmd + [p])
     except Exception as e:  # noqa: BLE001
-        return False, "启动编辑器失败：%s" % e
-    label = (todo.editor_status().get("label") or "编辑器")
-    return True, "已用 %s 打开" % label
+        return False, "Failed to launch editor: %s" % e
+    label = (todo.editor_status().get("label") or "editor")
+    return True, "Opened with %s" % label
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -530,14 +530,14 @@ class Handler(BaseHTTPRequestHandler):
     def _api_get(self, tid):
         date, _, t = todo._find_task(tid)
         if t is None:
-            self._json(404, {"error": "任务不存在: %s" % tid})
+            self._json(404, {"error": "Task not found: %s" % tid})
             return
         self._json(200, _task_view(date, t, dt.datetime.now()))
 
     def _api_create(self, body):
         text = _norm(body.get("text"))
         if not text:
-            self._json(400, {"error": "text 不能为空"})
+            self._json(400, {"error": "text must not be empty"})
             return
         now = dt.datetime.now()
         force = bool(body.get("force"))
@@ -587,12 +587,12 @@ class Handler(BaseHTTPRequestHandler):
     def _api_status(self, tid, body):
         status = _norm(body.get("status"))
         if status not in STATUSES:
-            self._json(400, {"error": "status 非法: %s" % status})
+            self._json(400, {"error": "Invalid status: %s" % status})
             return
         force = bool(body.get("force"))
         date, data, t = todo._find_task(tid)
         if t is None:
-            self._json(404, {"error": "任务不存在: %s" % tid})
+            self._json(404, {"error": "Task not found: %s" % tid})
             return
         if status == t.get("status"):
             self._json(200, _task_view(date, t, dt.datetime.now()))
@@ -613,7 +613,7 @@ class Handler(BaseHTTPRequestHandler):
     def _api_delete(self, tid):
         date, data, t = todo._find_task(tid)
         if t is None:
-            self._json(404, {"error": "任务不存在: %s" % tid})
+            self._json(404, {"error": "Task not found: %s" % tid})
             return
         now = dt.datetime.now()
         data["tasks"] = [x for x in data["tasks"] if x.get("id") != tid]
@@ -656,7 +656,7 @@ class Handler(BaseHTTPRequestHandler):
         由前端决定强制重试或放弃该条。"""
         patches = body.get("patches")
         if not isinstance(patches, list):
-            self._json(400, {"error": "patches 必须是数组"})
+            self._json(400, {"error": "patches must be an array"})
             return
         if not patches:
             self._json(200, {"ok": True, "saved": 0, "failed": [], "external_changed": False, "id_map": {}})
@@ -687,7 +687,7 @@ class Handler(BaseHTTPRequestHandler):
                 task_fields = p.get("task") or {}
                 text = _norm(task_fields.get("text"))
                 if not text:
-                    failed.append({"op": "create", "temp_id": temp_id, "reason": "text 不能为空"})
+                    failed.append({"op": "create", "temp_id": temp_id, "reason": "text must not be empty"})
                     continue
                 if not force:
                     hits = todo.find_duplicates(text)
@@ -739,7 +739,7 @@ class Handler(BaseHTTPRequestHandler):
                 if op == "status":
                     status = _norm(p.get("status"))
                     if status not in STATUSES:
-                        failed.append({"op": "status", "id": tid, "reason": "status 非法: %s" % status})
+                        failed.append({"op": "status", "id": tid, "reason": "Invalid status: %s" % status})
                         continue
                     if status == t.get("status"):
                         continue
@@ -849,7 +849,7 @@ def _do_update(tid, body, now, force):
     """更新任务字段。返回 (code, result)。"""
     date, data, t = todo._find_task(tid)
     if t is None:
-        return 404, {"error": "任务不存在: %s" % tid}
+        return 404, {"error": "Task not found: %s" % tid}
     fields = {k: v for k, v in body.items() if k not in ("force", "update_id")}
     err = _apply_fields(t, fields, now, is_new=False)
     if err:
@@ -868,16 +868,16 @@ def _do_update(tid, body, now, force):
 
 
 def main():
-    ap = argparse.ArgumentParser(prog="awam-todo-web", description="awam-todo 网页前端")
-    ap.add_argument("--port", type=int, default=8796, help="监听端口（默认 8796）")
-    ap.add_argument("--no-browser", action="store_true", help="启动后不自动打开浏览器")
-    ap.add_argument("--host", default="127.0.0.1", help="监听地址（默认 127.0.0.1）")
+    ap = argparse.ArgumentParser(prog="awam-todo-web", description="awam-todo web front-end")
+    ap.add_argument("--port", type=int, default=8796, help="listen port (default 8796)")
+    ap.add_argument("--no-browser", action="store_true", help="do not auto-open the browser after start")
+    ap.add_argument("--host", default="127.0.0.1", help="listen address (default 127.0.0.1)")
     args = ap.parse_args()
 
     httpd = ThreadingHTTPServer((args.host, args.port), Handler)
     url = "http://%s:%d/" % (args.host, args.port)
-    print("awam-todo Web 已启动: %s" % url)
-    print("按 Ctrl+C 停止。")
+    print("awam-todo web server started: %s" % url)
+    print("Press Ctrl+C to stop.")
 
     if not args.no_browser:
         threading.Timer(0.6, lambda: webbrowser.open(url)).start()
@@ -885,7 +885,7 @@ def main():
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
-        print("\n已停止。")
+        print("\nStopped.")
         httpd.shutdown()
 
 

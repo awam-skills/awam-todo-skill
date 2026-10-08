@@ -13,14 +13,14 @@ const mockItems = [
     depends_on: [], parent: "", due: "2026-09-20", created: "2026-10-02 22:11", updated: null,
     from: null, date: "2026-10-02", archived: false, blocked: false,
     overdue_days: 16, due_in_days: -16, stall_days: null, projected_finish: null,
-    pin: 0, pin_reason: "逾期 16 天，已滚入今日" },
+    pin: 0, pin_reason: "Overdue 16 day(s), moved to today" },
   { id: "T-20261002-004", text: "持续维护 vibe-astock", status: "进行中", importance: "不重要",
     urgent: "不紧急", is_urgent: false, note: "", blocker: "", counter: "",
     workspace: "G:\\Projects\\Stock\\vibe-astock", docs: [], links: [], tags: [],
     depends_on: [], parent: "", due: null, created: "2026-10-02 21:31", updated: null,
     from: null, date: "2026-10-02", archived: false, blocked: false,
     overdue_days: null, due_in_days: null, stall_days: 4, projected_finish: null,
-    pin: 1, pin_reason: "已 4 天未推进，滚入今日" },
+    pin: 1, pin_reason: "No progress for 4 day(s), moved to today" },
   { id: "T-20261002-006", text: "收尾 TGDown", status: "结束", importance: "不重要",
     urgent: "不紧急", is_urgent: false, note: "", blocker: "", counter: "", workspace: "",
     docs: [], links: [], tags: [], depends_on: [], parent: "", due: null,
@@ -144,7 +144,7 @@ const fetchCalls = [];
 global.fetch = async (url, opts) => {
   fetchCalls.push({ url: url, opts: opts || {} });
   if (String(url).indexOf("/api/workspace/") >= 0) {
-    return { ok: true, status: 200, json: async () => ({ ok: true, message: "已打开" }) };
+    return { ok: true, status: 200, json: async () => ({ ok: true, message: "Opened" }) };
   }
   return {
     ok: true, status: 200,
@@ -182,7 +182,8 @@ function check(name, cond, extra) {
       " wsMenuShown: wsMenuShown, scheduleWsReposition: scheduleWsReposition," +
       " repositionActiveWsMenu: repositionActiveWsMenu," +
       " setViewport: function(w, h){ window.innerWidth = w; window.innerHeight = h; }," +
-      " setMouse: function(x, y){ lastMouse.x = x; lastMouse.y = y; } };");
+      " setMouse: function(x, y){ lastMouse.x = x; lastMouse.y = y; } };" +
+      "\n;global.__setLang = setLang;");
   } catch (e) {
     console.log("  FAIL  脚本执行抛错 | " + e.message);
     process.exit(1);
@@ -192,16 +193,17 @@ function check(name, cond, extra) {
   const list = els["list"] ? els["list"].innerHTML : "";
   const nav = els["navSide"] ? els["navSide"].innerHTML : "";
   check("列表渲染出卡片", (list.match(/class="card/g) || []).length === 3, list.slice(0, 200));
-  check("逾期卡有红色置顶说明", /pin red/.test(list) && /逾期 16 天/.test(list));
-  check("停滞卡有琥珀置顶说明", /pin grace/.test(list) && /已 4 天未推进/.test(list));
-  check("逾期卡给出两个出口", /立即推进/.test(list) && /调整计划/.test(list));
-  check("卡片展示预案", /障碍/.test(list) && /拿起手机前先做 10 分钟/.test(list));
-  check("无推算时显示暂无推算", /暂无推算/.test(list));
+  check("逾期卡有红色置顶说明", /pin red/.test(list) && /Overdue 16 day\(s\)/.test(list));
+  check("停滞卡有琥珀置顶说明", /pin grace/.test(list) && /No progress for 4 day\(s\)/.test(list));
+  check("逾期卡给出两个出口", /Advance now/.test(list) && /Reschedule/.test(list));
+  check("卡片展示预案", /Blocker/.test(list) && /拿起手机前先做 10 分钟/.test(list));
+  check("无推算时显示 N/A", /N\/A/.test(list));
   check("导航渲染含今日视图", /data-k="today"/.test(nav));
   check("默认视图是全部(active)", /class="navitem active" data-k="all"/.test(nav), nav.slice(0, 160));
   check("默认视图不是今日入口", !/navitem active" data-k="today"/.test(nav));
-  check("周口径条已渲染", /周一为起点/.test(els["weekbar"].innerHTML || ""));
-  check("底部新建入口文案", /新增待办（也可以点这里）/.test(els["newEntryBottom"].innerHTML || ""));
+  check("默认语言为英文", /Advance now/.test(list) && !/立即推进/.test(list));
+  check("周口径条已渲染(英文)", /starts Monday/.test(els["weekbar"].innerHTML || ""));
+  check("底部新建入口文案(英文)", /New todo \(click here too\)/.test(els["newEntryBottom"].innerHTML || ""));
   check("图标为内联 svg", /<svg class="ic/.test(list));
   check("无 emoji 输出", !/[\u{1F300}-\u{1FAFF}]/u.test(list));
 
@@ -209,7 +211,19 @@ function check(name, cond, extra) {
   global.__setState("today"); global.__render();
   const todayList = els["list"].innerHTML || "";
   check("今日视图只剩置顶项", (todayList.match(/class="card/g) || []).length === 2, todayList.slice(0, 120));
-  check("今日视图有口径说明", /今天要处理 2 条/.test(todayList));
+  check("今日视图有口径说明(英文)", /Today: 2 todo\(s\) to handle/.test(todayList));
+
+  // ---------- 国际化：默认英文，可切换中文并持久化，切回英文恢复 ----------
+  global.__setLang("zh"); global.__render();
+  const zhList = els["list"].innerHTML || "";
+  check("切中文后出口显示中文", /立即推进/.test(zhList) && /调整计划/.test(zhList));
+  check("切中文后预案显示中文", /障碍/.test(zhList) && /对策/.test(zhList));
+  check("切中文后无推算显示中文", /暂无推算/.test(zhList));
+  check("切中文后导航含进行中", /进行中/.test(els["navSide"].innerHTML || ""));
+  check("切中文后底部新建入口为中文", /新增待办（也可以点这里）/.test(els["newEntryBottom"].innerHTML || ""));
+  global.__setLang("en"); global.__render();
+  const enBack = els["list"].innerHTML || "";
+  check("切回英文恢复英文", /Advance now/.test(enBack) && !/立即推进/.test(enBack));
 
   console.log("\n== 工作空间悬浮菜单定位 ==");
   const WS = global.__ws;
@@ -473,7 +487,7 @@ function check(name, cond, extra) {
   global.__setState("all"); global.__render();
   let cardHtml = els["list"].innerHTML;
   check("编辑器可用时渲染「用编辑器打开」", /data-ws-act="editor"/.test(cardHtml), cardHtml.slice(0, 120));
-  check("菜单项显示配置的编辑器名", /用Cursor打开/.test(cardHtml), cardHtml.slice(0, 120));
+  check("菜单项显示配置的编辑器名", /Open with Cursor/.test(cardHtml), cardHtml.slice(0, 120));
   check("编辑器可用时不再渲染旧 cursor 动作", !/data-ws-act="cursor"/.test(cardHtml));
 
   // 只配了 path、没配 label 时必须回落到通用文案「用编辑器打开」，不能拼出「用打开」
@@ -481,12 +495,12 @@ function check(name, cond, extra) {
                             path: "C:\\Apps\\Code.exe", error: null };
   global.__render();
   const genericHtml = els["list"].innerHTML;
-  check("label 未配置时回落为「用编辑器打开」", /用编辑器打开/.test(genericHtml), genericHtml.slice(0, 120));
+  check("label 未配置时回落为「用编辑器打开」", /Open with editor/.test(genericHtml), genericHtml.slice(0, 120));
   check("回落时菜单项照常渲染", /data-ws-act="editor"/.test(genericHtml));
-  check("回落时不会拼出「用打开」", !/用打开/.test(genericHtml), genericHtml.slice(0, 120));
+  check("回落时不会拼出「用打开」", !/Open with\s*$/.test(genericHtml), genericHtml.slice(0, 120));
 
   global.__store.editor = { configured: false, available: false, label: null, path: null,
-                            error: "未配置编辑器（env.json 缺少 editor.path）" };
+                            error: "editor not configured (env.json lacks editor.path)" };
   global.__render();
   cardHtml = els["list"].innerHTML;
   check("编辑器不可用时不渲染「用编辑器打开」", !/data-ws-act="editor"/.test(cardHtml),
@@ -494,7 +508,7 @@ function check(name, cond, extra) {
   check("编辑器不可用时仍保留复制路径与打开目录", /data-ws-act="copy"/.test(cardHtml) && /data-ws-act="open"/.test(cardHtml));
 
   global.__store.editor = { configured: true, available: false, label: "Cursor", path: "D:\\gone\\Cursor.exe",
-                            error: "编辑器路径失效（文件不存在）" };
+                            error: "editor path invalid (file missing)" };
   global.__render();
   check("配置了但路径失效时同样不渲染该菜单项", !/data-ws-act="editor"/.test(els["list"].innerHTML));
 

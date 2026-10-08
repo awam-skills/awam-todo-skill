@@ -1,6 +1,6 @@
 ---
 name: awam-todo
-version: 0.5.0
+version: 0.6.0
 description: >-
   Personal todo management skill. Parses natural-language todos from the
   session (task text, importance, urgency, note, workspace dir, related docs,
@@ -19,10 +19,13 @@ description: >-
   numbers. Missing tags are suggested read-only (suggest-tags) and confirmed
   before writing. storage_dir and editor are configurable via `env --set`;
   an optional local web UI (server.py) is prompted after mutations
-  (ui.port / ui.prompt). Use when the user says 记一下/加个待办/帮我记/
-  安排XX/提醒我X日做XX (or English equivalents: add a todo, remind me to …,
-  note this down) or invokes /awam-todo; also for listing, completing,
-  starting, reopening, archiving, setting dependencies, and managing subtasks.
+  (ui.port / ui.prompt). Language policy: the AI conversation follows the
+  user's language; CLI/API output is fixed English; the web UI is i18n
+  (English default, switchable to Chinese; inline, offline-safe). Use when the
+  user says 记一下/加个待办/帮我记/安排XX/提醒我X日做XX (or English
+  equivalents: add a todo, remind me to …, note this down) or invokes
+  /awam-todo; also for listing, completing, starting, reopening, archiving,
+  setting dependencies, and managing subtasks.
 ---
 
 # awam-todo (Input & Manage To-Do)
@@ -91,6 +94,18 @@ python "<skill-directory>\scripts\todo.py" <command> <args>
 `<skill-directory>` is the installation directory of this skill (on Windows
 typically `C:\Users\<user>\.agents\skills\awam-todo`; substitute the actual
 install location). Commands below are abbreviated as `python ...\todo.py`.
+
+## Language policy (three layers)
+
+| Layer | Language | Notes |
+|-------|----------|-------|
+| AI conversation in session | **Follows the user's language** | Reply in the language the user is speaking (Chinese ↔ English, etc.); when the user writes Chinese, reply in Chinese; when English, in English. Never force one fixed language. |
+| CLI / API output (`todo.py`, `server.py`) | **English, fixed** | All user-facing CLI output, argparse help, the tkinter dialog, web API error/message fields and startup logs are English. **Data values are exempt**: statuses (维护 / 进行中 / 结束 / 待开始 / 其他), importance (重要 / 不重要), urgency (紧急 / 不紧急), tags, view names and the storage-file keys (`状态:` / `重要:` / `内容:` …) remain literal Chinese runtime values — pass them to the CLI exactly as written and display them as-is. |
+| Web UI (`web/index.html`) | **i18n: English default, switchable to Chinese** | Inline i18n word tables (zh/en) with **no external libraries**, offline-safe. Preference is stored in `localStorage` under `awam-todo:lang`; default `en`. A language selector sits in the top bar (English / 中文). Form `<select>` **values** submitted to the backend remain the Chinese data values; only displayed labels/options are translated. Data values from `index.json` are shown **as-is, never translated** — e.g. `pin_reason` is generated in English by the CLI's pinning logic and stays English in the UI. |
+
+Changing the UI language affects **display only** — never the data. The AI
+must keep passing Chinese data values (status / importance / urgency / tags /
+view names) to the CLI in all languages.
 
 ## Environment detection & path unification (read this first)
 
@@ -616,6 +631,11 @@ When editing `web/index.html`, always follow:
 6. After changes run both self-tests: `python scripts/selftest.py` (CLI
    scenarios, temp dirs, never touches real data) and
    `node scripts/smoke-web.js` (front-end render smoke, minimal DOM stubs).
+7. **i18n is inline and self-contained**: the zh/en word tables live in the
+   script (constant `I18N`, helper `tr()`), language preference uses
+   `localStorage["awam-todo:lang"]`, default `en`; **never** pull an external
+   i18n library or CDN (offline constraint). Display-only: `<select>` values
+   and stored data stay Chinese.
 
 ## Non-goals
 

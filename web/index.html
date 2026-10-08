@@ -1,10 +1,10 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <meta name="theme-color" content="#7c5cff">
-<title>Awam Todo 看板</title>
+<title>Awam Todo Board</title>
 <!-- 约束：无外部库、资源全内联、断网可用（不引用任何 CDN / 外链字体 / 远程图片） -->
 <style>
   :root{
@@ -244,12 +244,12 @@
       <div class="logo" id="logo1"></div>
       <div>
         <h1>Awam Todo</h1>
-        <div class="sub">本地暂存 + 延迟保存</div>
+        <div class="sub" id="subSide">本地暂存 + 延迟保存</div>
       </div>
     </div>
-    <div class="side-title">视图</div>
+    <div class="side-title" id="sideTitle">视图</div>
     <div class="nav side" id="navSide"></div>
-    <div class="side-title">标签</div>
+    <div class="side-title" id="tagTitle">标签</div>
     <select id="tagFilterSide" class="mini-select" style="width:100%" onchange="onTagFilter(this.value)">
       <option value="">全部标签</option>
     </select>
@@ -261,13 +261,13 @@
       <div class="brand">
         <div class="logo" id="logo2"></div>
         <div>
-          <h1>Awam Todo 看板</h1>
+          <h1 id="brandTitle">Awam Todo 看板</h1>
           <div class="sub" id="genTime">加载中…</div>
         </div>
       </div>
       <div class="spacer"></div>
       <span id="saveState" style="font-size:12px;color:var(--muted)"></span>
-      <select id="autosaveSel" class="mini-select" title="自动保存间隔" onchange="onAutosaveChange(this)">
+      <select id="autosaveSel" class="mini-select" title="自动保存间隔 / Autosave interval" onchange="onAutosaveChange(this)">
         <option value="0">自动保存: 关</option>
         <option value="1">自动保存: 1分钟</option>
         <option value="5">自动保存: 5分钟</option>
@@ -275,7 +275,11 @@
         <option value="30">自动保存: 30分钟</option>
         <option value="60">自动保存: 60分钟</option>
       </select>
-      <button class="btn btn-primary" id="saveBtn" onclick="doSave()"><span id="saveIcon"></span>保存更改<span class="badge" id="dirtyBadge">0</span></button>
+      <select id="langSel" class="mini-select" title="Language / 语言" onchange="onLangChange(this)">
+        <option value="en">English</option>
+        <option value="zh">中文</option>
+      </select>
+      <button class="btn btn-primary" id="saveBtn" onclick="doSave()"><span id="saveIcon"></span><span id="saveBtnLabel">保存更改</span><span class="badge" id="dirtyBadge">0</span></button>
       <button class="btn btn-primary" id="newBtnTop" onclick="openCreate()"></button>
     </div>
 
@@ -295,7 +299,7 @@
     </div>
 
     <div class="cards" id="list"></div>
-    <div class="empty" id="empty" style="display:none"><span id="emptyIcon"></span><div>暂无符合条件的任务</div></div>
+    <div class="empty" id="empty" style="display:none"><span id="emptyIcon"></span><div id="emptyText">暂无符合条件的任务</div></div>
     <button class="new-entry" id="newEntryBottom" onclick="openCreate()"></button>
   </main>
 </div>
@@ -309,70 +313,70 @@
     <h2 id="taskModalTitle">新增待办</h2>
     <div class="form-grid">
       <div class="field full">
-        <label>任务内容 *</label>
+        <label id="lblText">任务内容 *</label>
         <input id="f_text" placeholder="要做的核心事情">
       </div>
       <div class="field">
-        <label>状态 <span class="hint">(默认值可改)</span></label>
+        <label><span id="lblStatus">状态</span> <span class="hint" id="hintStatus">(默认值可改)</span></label>
         <select id="f_status">
           <option>进行中</option><option>待开始</option><option>结束</option><option>维护</option><option>其他</option>
         </select>
       </div>
       <div class="field">
-        <label>重要性</label>
+        <label id="lblImportance">重要性</label>
         <select id="f_importance"><option>不重要</option><option>重要</option></select>
       </div>
       <div class="field">
-        <label>紧急</label>
+        <label id="lblUrgent">紧急</label>
         <select id="f_urgent"><option>不紧急</option><option>紧急</option></select>
       </div>
       <div class="field">
-        <label>截止时间</label>
+        <label id="lblDue">截止时间</label>
         <input id="f_due" placeholder="如 明天 10:00 / 周五 / 2026-10-05">
       </div>
       <div class="field">
-        <label>存放日期 <span class="hint">(仅新增，默认今天)</span></label>
+        <label><span id="lblDate">存放日期</span> <span class="hint" id="hintDate">(仅新增，默认今天)</span></label>
         <input id="f_date" placeholder="YYYY-MM-DD">
       </div>
       <div class="field full">
-        <label><span id="lblBlocker"></span>最容易拦住我的障碍 <span class="hint">(选填)</span></label>
+        <label><span id="lblBlocker"></span><span id="lblBlockerTxt">最容易拦住我的障碍</span> <span class="hint" id="hintBlocker">(选填)</span></label>
         <input id="f_blocker" placeholder="如 晚上刷手机 / 开会打断">
       </div>
       <div class="field full">
-        <label><span id="lblCounter"></span>如果它出现，我就…… <span class="hint">(选填)</span></label>
+        <label><span id="lblCounter"></span><span id="lblCounterTxt">如果它出现，我就……</span> <span class="hint" id="hintCounter">(选填)</span></label>
         <input id="f_counter" placeholder="如 拿起手机前先做 10 分钟 / 会后立刻续上">
       </div>
       <div class="field full">
-        <label>工作空间目录</label>
+        <label id="lblWorkspace">工作空间目录</label>
         <input id="f_workspace" placeholder="G:\Projects\...">
       </div>
       <div class="field full">
-        <label>备注</label>
+        <label id="lblNote">备注</label>
         <textarea id="f_note" placeholder="补充说明"></textarea>
       </div>
       <div class="field">
-        <label>相关文档</label>
+        <label id="lblDocs">相关文档</label>
         <input id="f_docs" placeholder="用 ; 分隔">
       </div>
       <div class="field">
-        <label>链接</label>
+        <label id="lblLinks">链接</label>
         <input id="f_links" placeholder="用 ; 分隔">
       </div>
       <div class="field full">
-        <label>标签</label>
+        <label id="lblTags">标签</label>
         <input id="f_tags" placeholder="用 ; 分隔，如 工作;学习">
       </div>
       <div class="field">
-        <label>前置依赖 (任务ID)</label>
+        <label id="lblDeps">前置依赖 (任务ID)</label>
         <input id="f_deps" placeholder="T-20261002-001; T-...">
       </div>
       <div class="field">
-        <label>父任务 (任务ID)</label>
+        <label id="lblParent">父任务 (任务ID)</label>
         <input id="f_parent" placeholder="归属主任务 ID">
       </div>
     </div>
     <div class="modal-foot">
-      <button class="btn btn-ghost" onclick="closeModal('taskOverlay')">取消</button>
+      <button class="btn btn-ghost" id="cancelTaskBtn" onclick="closeModal('taskOverlay')">取消</button>
       <button class="btn btn-primary" id="taskSaveBtn" onclick="submitTask()">保存</button>
     </div>
   </div>
@@ -381,16 +385,16 @@
 <!-- 改截止（调整计划） -->
 <div class="overlay" id="dueOverlay">
   <div class="modal" style="max-width:440px">
-    <h2><span id="dueIcon"></span>调整计划</h2>
+    <h2><span id="dueIcon"></span><span id="dueTitleTxt">调整计划</span></h2>
     <div class="field full">
-      <label>新的截止时间</label>
+      <label id="lblNewDue">新的截止时间</label>
       <input id="d_due" placeholder="如 明天 10:00 / 下周一 / 3天后 / 2026-10-20">
       <div class="hint" id="d_hint">支持自然语言；留空并点「清除截止」则取消截止日。</div>
     </div>
     <div class="modal-foot">
-      <button class="btn btn-ghost" onclick="closeModal('dueOverlay')">取消</button>
-      <button class="btn btn-ghost" onclick="saveDue(true)">清除截止</button>
-      <button class="btn btn-primary" onclick="saveDue(false)">保存</button>
+      <button class="btn btn-ghost" id="cancelDueBtn" onclick="closeModal('dueOverlay')">取消</button>
+      <button class="btn btn-ghost" id="clearDueBtn" onclick="saveDue(true)">清除截止</button>
+      <button class="btn btn-primary" id="saveDueBtn" onclick="saveDue(false)">保存</button>
     </div>
   </div>
 </div>
@@ -413,9 +417,259 @@
 "use strict";
 const STATUS_CLASS = { "进行中":"progress", "待开始":"todo", "结束":"done", "维护":"maint", "其他":"other" };
 const STATUSES = ["进行中", "待开始", "结束", "维护", "其他"];
+const IMPORTANCES = ["重要", "不重要"];
+const URGENTS = ["紧急", "不紧急"];
 const LS_BASELINE = "awam-todo:baseline";
 const LS_PENDING  = "awam-todo:pending";
 const LS_AUTOSAVE = "awam-todo:autosave-min";
+const LS_LANG = "awam-todo:lang";
+
+// ---------- 国际化（zh / en，默认英文；无外部库，词表内联、断网可用） ----------
+const I18N = {
+  en: {
+    app_title:"Awam Todo Board", sub:"Local draft + deferred save",
+    views:"Views", tags:"Tags", all_tags:"All tags",
+    save_changes:"Save changes", new_todo:"New todo", new_todo_bottom:"New todo (click here too)",
+    search_ph:"Search text / note / workspace / plan…",
+    empty_none:"No todos match the current filter",
+    autosave_off:"Autosave: off", autosave_min:"Autosave: {n} min",
+    gen_n:"{n} todos", gen_pending:"{n} unsaved draft(s)", gen_synced:"Synced to local storage",
+    week_note:"Week boundary: Monday is the start", week_range:"This week: {start} → {end}",
+    schema_fmt:"Storage schema v{v}",
+    defaults_hint:"Defaults overridable via env --set defaults.*",
+    today_stat:"Due today", in_progress_stat:"In progress", overdue_stat:"Overdue",
+    done_stat:"Done", total_stat:"Total",
+    week_this:"This week (starts Monday): ", week_new:"new", week_done:"done",
+    today_head:"Today: {n} todo(s) to handle, sorted by overdue → stalled → due today; each is pinned with a reason.",
+    important:"Important", urgent:"Urgent", due_by:"Due {d}",
+    overdue_days:"Overdue {n} day(s)", stalled_days:"Stalled {n} day(s)",
+    blocked_by_deps:"Blocked by deps", subtask:"Subtask", unsaved:"Unsaved",
+    pinned:"Pinned", advance_now:"Advance now", reschedule:"Reschedule",
+    blocker:"Blocker", counter:"Counter", not_set:"(not set)",
+    copy_path:"Copy path", open_dir:"Open folder", open_with:"Open with {label}", editor:"editor",
+    created_at:"Created {t}", updated_at:"Updated {t}", projected:"Projected finish {t}", na:"N/A",
+    deps:"Deps: {d}", change_status:"Change status", edit:"Edit", delete:"Delete",
+    load_fail:"Failed to load",
+    restore_title:"Unsaved changes detected",
+    restore_body:"When you closed the page, {n} change(s) had not been saved yet.<br>Restore and keep them staged?",
+    restore_btn:"Restore changes",
+    restore_done:"Restored {n} unsaved change(s); keep editing or click Save changes to commit",
+    discard_btn:"Discard", discard_done:"Discarded the previous unsaved changes",
+    copy_path_done:"Path copied", copy_fail:"Copy failed", op_ok:"Success", op_fail:"Operation failed",
+    advance_toast:"{from} → {next} (staged; click Save changes to commit)",
+    no_pending:"No pending changes", save_fail:"Save failed",
+    external_changed:"External changes detected; changes merged into the latest files",
+    already_latest:"Already up to date, nothing to save", saved_n:"Saved {n} change(s)",
+    partial_title:"Some changes were not saved",
+    force_all:"Force apply all", cancel_these:"Cancel these changes",
+    force_marked:"Marked for force-apply; saving again…", abandoned_n:"Discarded {n} change(s)",
+    fail_head:"Saved {s}; the following {n} need attention:",
+    dup_line:"· New todo duplicates an existing one: {t}",
+    conflict_kind_children:"unfinished subtasks", conflict_kind_deps:"unfinished dependencies",
+    conflict_guard:"guard blocked", conflict_line:"· {id} blocked by {list}",
+    fail_hint:"“Force apply all” retries ignoring duplicate/dependency guards; “Cancel these changes” discards these {n}.",
+    task_not_found:"Task not found", edit_task:"Edit {id}", text_required:"Task content is required",
+    staged_edit:"Changes staged; click Save changes to commit",
+    staged_delete:"Deletion staged; click Save changes to commit",
+    dup_title:"Identical todo found", dup_body:"· [exact] {id} ({status}) {text}",
+    dup_ask:"Create it anyway? (The backend re-checks for duplicates on save)",
+    create_anyway:"Create anyway", staged_new:"New todo staged; click Save changes to commit",
+    cancel:"Cancel", save:"Save", new_due:"New deadline",
+    ph_due2:"e.g. 明天 10:00 / 下周一 / 3天后 / 2026-10-20",
+    due_hint:"Natural language supported; leave empty and click “Clear deadline” to remove it.",
+    clear_due:"Clear deadline",
+    due_required:"Please fill in the new deadline, or click “Clear deadline”",
+    due_cleared:"Deadline cleared (staged)",
+    due_rescheduled:"Rescheduled: {d} (staged; will be normalized on save)",
+    del_title:"Delete this todo?",
+    del_body:"{id}: {text}<br>Deleting also removes other todos' dependency/parent references to it.",
+    del_btn:"Delete", ok:"OK",
+    autosave_off_toast:"Autosave disabled", autosave_set:"Autosave interval set to {n} min",
+    saving:"Saving…", dirty_n:"{n} unsaved change(s)", saved_at:"Saved {t}",
+    lbl_text:"Task content *", ph_text:"What needs to be done",
+    lbl_status:"Status", hint_default:"(default is configurable)",
+    lbl_importance:"Importance", lbl_urgent:"Urgent", lbl_due:"Deadline",
+    ph_due:"e.g. 明天 10:00 / 周五 / 2026-10-05",
+    lbl_date:"Store date", hint_new_only:"(new only; default today)",
+    lbl_blocker:"The obstacle most likely to block me", hint_optional:"(optional)",
+    ph_blocker:"e.g. 晚上刷手机 / 开会打断",
+    lbl_counter:"If it appears, I will…", ph_counter:"e.g. 拿起手机前先做 10 分钟 / 会后立刻续上",
+    lbl_workspace:"Workspace directory", lbl_note:"Note", ph_note:"Additional notes",
+    lbl_docs:"Related docs", lbl_links:"Links", ph_semi:"separated by ;",
+    lbl_tags:"Tags", ph_tags:"separated by ;, e.g. 工作;学习",
+    lbl_deps:"Dependencies (task IDs)", lbl_parent:"Parent (task ID)", ph_parent:"Parent task ID",
+    hint_title:"Notice",
+    tab_all:"All", tab_today:"Today", tab_inprogress:"In progress", tab_todo:"Not started",
+    tab_done:"Done", tab_urgent:"Urgent", tab_overdue:"Overdue"
+  },
+  zh: {
+    app_title:"Awam Todo 看板", sub:"本地暂存 + 延迟保存",
+    views:"视图", tags:"标签", all_tags:"全部标签",
+    save_changes:"保存更改", new_todo:"新增待办", new_todo_bottom:"新增待办（也可以点这里）",
+    search_ph:"搜索内容 / 备注 / 工作空间 / 预案…",
+    empty_none:"暂无符合条件的任务",
+    autosave_off:"自动保存: 关", autosave_min:"自动保存: {n}分钟",
+    gen_n:"共 {n} 条待办", gen_pending:"本地暂存 {n} 条未保存", gen_synced:"已同步本地存储",
+    week_note:"周口径：周一为起点", week_range:"本周：{start} → {end}",
+    schema_fmt:"存储格式 schema v{v}",
+    defaults_hint:"默认值可用 env --set defaults.* 覆盖",
+    today_stat:"今日要处理", in_progress_stat:"进行中", overdue_stat:"逾期",
+    done_stat:"已结束", total_stat:"总计",
+    week_this:"本周（周一为起点）：", week_new:"新增", week_done:"完成",
+    today_head:"今天要处理 {n} 条：按「逾期 → 停滞 → 今天到期」排序，每条都标了置顶原因。",
+    important:"重要", urgent:"紧急", due_by:"截止 {d}",
+    overdue_days:"逾期 {n} 天", stalled_days:"停滞 {n} 天",
+    blocked_by_deps:"被依赖阻塞", subtask:"子任务", unsaved:"未保存",
+    pinned:"置顶", advance_now:"立即推进", reschedule:"调整计划",
+    blocker:"障碍", counter:"对策", not_set:"（未填）",
+    copy_path:"复制路径", open_dir:"打开目录", open_with:"用{label}打开", editor:"编辑器",
+    created_at:"创建 {t}", updated_at:"更新 {t}", projected:"预计完成日 {t}", na:"暂无推算",
+    deps:"依赖 {d}", change_status:"修改状态", edit:"编辑", delete:"删除",
+    load_fail:"加载失败",
+    restore_title:"检测到未保存的更改",
+    restore_body:"上次关闭页面时有 {n} 条更改尚未保存到文件。<br>是否恢复并继续暂存？",
+    restore_btn:"恢复更改",
+    restore_done:"已恢复 {n} 条未保存更改，可继续编辑或点「保存更改」落盘",
+    discard_btn:"放弃", discard_done:"已放弃上次未保存的更改",
+    copy_path_done:"已复制路径", copy_fail:"复制失败", op_ok:"成功", op_fail:"操作失败",
+    advance_toast:"{from} → {next}（已暂存，点「保存更改」落盘）",
+    no_pending:"没有待保存的更改", save_fail:"保存失败",
+    external_changed:"检测到外部修改，更改已合并到最新文件",
+    already_latest:"已是最新状态，无需保存", saved_n:"已保存 {n} 条更改",
+    partial_title:"部分更改未保存",
+    force_all:"强制应用全部", cancel_these:"取消这些更改",
+    force_marked:"已标记强制应用，正在再次保存…", abandoned_n:"已放弃 {n} 条更改",
+    fail_head:"已保存 {s} 条，以下 {n} 条需要处理：",
+    dup_line:"· 新任务与已有任务重复：{t}",
+    conflict_kind_children:"未完成子任务", conflict_kind_deps:"前置依赖",
+    conflict_guard:"守卫拦截", conflict_line:"· {id} 被{list}",
+    fail_hint:"「强制应用全部」会忽略重复/依赖守卫重试；「取消这些更改」则放弃这 {n} 条。",
+    task_not_found:"任务不存在", edit_task:"编辑 {id}", text_required:"任务内容不能为空",
+    staged_edit:"已暂存修改，点「保存更改」落盘",
+    staged_delete:"已暂存删除，点「保存更改」落盘",
+    dup_title:"检测到相同任务", dup_body:"· [相同] {id}（{status}）{text}",
+    dup_ask:"仍要新建吗？（保存时后端会再次做完整查重）",
+    create_anyway:"仍要新建", staged_new:"已暂存新增，点「保存更改」落盘",
+    cancel:"取消", save:"保存", new_due:"新的截止时间",
+    ph_due2:"如 明天 10:00 / 下周一 / 3天后 / 2026-10-20",
+    due_hint:"支持自然语言；留空并点「清除截止」则取消截止日。",
+    clear_due:"清除截止",
+    due_required:"请填写新的截止时间，或点「清除截止」",
+    due_cleared:"已清除截止日（已暂存）",
+    due_rescheduled:"已调整计划：{d}（已暂存，保存后回显为标准格式）",
+    del_title:"确认删除该待办？",
+    del_body:"{id}：{text}<br>删除后将同时清理其他任务对它的依赖/父任务引用。",
+    del_btn:"删除", ok:"确定",
+    autosave_off_toast:"已关闭自动保存", autosave_set:"自动保存间隔设为 {n} 分钟",
+    saving:"保存中…", dirty_n:"有 {n} 条未保存更改", saved_at:"已保存 {t}",
+    lbl_text:"任务内容 *", ph_text:"要做的核心事情",
+    lbl_status:"状态", hint_default:"(默认值可改)",
+    lbl_importance:"重要性", lbl_urgent:"紧急", lbl_due:"截止时间",
+    ph_due:"如 明天 10:00 / 周五 / 2026-10-05",
+    lbl_date:"存放日期", hint_new_only:"(仅新增，默认今天)",
+    lbl_blocker:"最容易拦住我的障碍", hint_optional:"(选填)",
+    ph_blocker:"如 晚上刷手机 / 开会打断",
+    lbl_counter:"如果它出现，我就……", ph_counter:"如 拿起手机前先做 10 分钟 / 会后立刻续上",
+    lbl_workspace:"工作空间目录", lbl_note:"备注", ph_note:"补充说明",
+    lbl_docs:"相关文档", lbl_links:"链接", ph_semi:"用 ; 分隔",
+    lbl_tags:"标签", ph_tags:"用 ; 分隔，如 工作;学习",
+    lbl_deps:"前置依赖 (任务ID)", lbl_parent:"父任务 (任务ID)", ph_parent:"归属主任务 ID",
+    hint_title:"提示",
+    tab_all:"全部", tab_today:"今日", tab_inprogress:"进行中", tab_todo:"待开始",
+    tab_done:"已结束", tab_urgent:"紧急", tab_overdue:"逾期"
+  }
+};
+
+let lang = "en";
+try{ const v = localStorage.getItem(LS_LANG); if (v === "zh") lang = "zh"; }catch(e){}
+
+function tr(key, vars){
+  const dict = (I18N[lang] || I18N.en);
+  let s = (dict[key] != null) ? dict[key] : (I18N.en[key] != null ? I18N.en[key] : key);
+  if (vars) for (const k in vars) s = s.split("{" + k + "}").join(String(vars[k]));
+  return s;
+}
+// 数据值展示映射：value 永远是中文数据值，这里只负责显示译名
+const STATUS_LABELS = {
+  zh: {"进行中":"进行中","待开始":"待开始","结束":"结束","维护":"维护","其他":"其他"},
+  en: {"进行中":"In progress","待开始":"Not started","结束":"Done","维护":"Maintaining","其他":"Other"}
+};
+const IMPORTANCE_LABELS = { zh:{"重要":"重要","不重要":"不重要"}, en:{"重要":"Important","不重要":"Not important"} };
+const URGENT_LABELS = { zh:{"紧急":"紧急","不紧急":"不紧急"}, en:{"紧急":"Urgent","不紧急":"Not urgent"} };
+function labelOf(map, v){ const m = map[lang] || map.en; return (m[v] != null) ? m[v] : v; }
+function statusLabel(v){ return labelOf(STATUS_LABELS, v); }
+function importanceLabel(v){ return labelOf(IMPORTANCE_LABELS, v); }
+function urgentLabel(v){ return labelOf(URGENT_LABELS, v); }
+function setText(id, v){ const el = $(id); if (el) el.textContent = v; }
+
+function applyLang(){
+  if (document.documentElement) document.documentElement.lang = (lang === "zh") ? "zh-CN" : "en";
+  document.title = tr("app_title");
+  try{ localStorage.setItem(LS_LANG, lang); }catch(e){}
+  const lsel = $("langSel"); if (lsel) lsel.value = lang;
+  // 静态文案（标签 / 按钮 / 标题）
+  setText("subSide", tr("sub"));
+  setText("sideTitle", tr("views"));
+  setText("tagTitle", tr("tags"));
+  setText("brandTitle", tr("app_title"));
+  setText("saveBtnLabel", tr("save_changes"));
+  setText("emptyText", tr("empty_none"));
+  setText("taskModalTitle", tr("new_todo"));
+  setText("dueTitleTxt", tr("reschedule"));
+  setText("confirmTitle", tr("hint_title"));
+  setText("lblText", tr("lbl_text"));
+  setText("lblStatus", tr("lbl_status"));
+  setText("hintStatus", tr("hint_default"));
+  setText("lblImportance", tr("lbl_importance"));
+  setText("lblUrgent", tr("lbl_urgent"));
+  setText("lblDue", tr("lbl_due"));
+  setText("lblDate", tr("lbl_date"));
+  setText("hintDate", tr("hint_new_only"));
+  setText("lblBlockerTxt", tr("lbl_blocker"));
+  setText("hintBlocker", tr("hint_optional"));
+  setText("lblCounterTxt", tr("lbl_counter"));
+  setText("hintCounter", tr("hint_optional"));
+  setText("lblWorkspace", tr("lbl_workspace"));
+  setText("lblNote", tr("lbl_note"));
+  setText("lblDocs", tr("lbl_docs"));
+  setText("lblLinks", tr("lbl_links"));
+  setText("lblTags", tr("lbl_tags"));
+  setText("lblDeps", tr("lbl_deps"));
+  setText("lblParent", tr("lbl_parent"));
+  setText("cancelTaskBtn", tr("cancel"));
+  setText("taskSaveBtn", tr("save"));
+  setText("cancelDueBtn", tr("cancel"));
+  setText("clearDueBtn", tr("clear_due"));
+  setText("saveDueBtn", tr("save"));
+  setText("lblNewDue", tr("new_due"));
+  setText("confirmCancelBtn", tr("cancel"));
+  setText("confirmOkBtn", tr("ok"));
+  // 首尾新建入口（带图标，用 innerHTML 而非 textContent）
+  const nt = $("newBtnTop"); if (nt) nt.innerHTML = ic("plus","sm") + esc(tr("new_todo"));
+  const nb = $("newEntryBottom"); if (nb) nb.innerHTML = ic("plus","lg") + esc(tr("new_todo_bottom"));
+  // 占位符
+  const ph = { "search":tr("search_ph"), "f_text":tr("ph_text"), "f_due":tr("ph_due"),
+               "f_blocker":tr("ph_blocker"), "f_counter":tr("ph_counter"), "f_note":tr("ph_note"),
+               "f_docs":tr("ph_semi"), "f_links":tr("ph_semi"), "f_tags":tr("ph_tags"),
+               "f_parent":tr("ph_parent"), "d_due":tr("ph_due2") };
+  for (const k in ph){ const el = $(k); if (el) el.placeholder = ph[k]; }
+  // 下拉选项：显示译名，value 仍是中文数据值（提交给后端不变）
+  const asel = $("autosaveSel");
+  if (asel){
+    const cur = asel.value || String(autosaveMin());
+    asel.innerHTML = [0,1,5,10,30,60].map(v =>
+      '<option value="'+v+'">' + esc(v === 0 ? tr("autosave_off") : tr("autosave_min",{n:v})) + '</option>').join("");
+    asel.value = cur;
+  }
+  const fs = $("f_status"); if (fs) fs.innerHTML = STATUSES.map(s => '<option value="'+s+'">'+esc(statusLabel(s))+'</option>').join("");
+  const fi = $("f_importance"); if (fi) fi.innerHTML = IMPORTANCES.map(s => '<option value="'+s+'">'+esc(importanceLabel(s))+'</option>').join("");
+  const fu = $("f_urgent"); if (fu) fu.innerHTML = URGENTS.map(s => '<option value="'+s+'">'+esc(urgentLabel(s))+'</option>').join("");
+}
+function setLang(l){
+  lang = (l === "zh") ? "zh" : "en";
+  applyLang(); render();
+}
+function onLangChange(sel){ setLang(sel.value); }
 
 // ---------- 内联 SVG 图标（不使用 emoji、不引用任何外部资源） ----------
 const P = {
@@ -451,14 +705,15 @@ function ic(name, cls){
 }
 const STATUS_ICON = { "进行中":"play", "待开始":"inbox", "结束":"check", "维护":"pause", "其他":"tag" };
 // 视图：与后端 state 对齐；「今日」是一个视图，不作为默认入口（默认落在「全部」）
+// label 走 i18n 词表（t(t.key)），k 保持后端 state 原样
 const TABS = [
-  { k:"all",     label:"全部",   icon:"list"  },
-  { k:"today",   label:"今日",   icon:"sun"   },
-  { k:"进行中",   label:"进行中", icon:"play"  },
-  { k:"待开始",   label:"待开始", icon:"inbox" },
-  { k:"结束",     label:"已结束", icon:"check" },
-  { k:"urgent",  label:"紧急",   icon:"zap"   },
-  { k:"overdue", label:"逾期",   icon:"alert" }
+  { k:"all",     key:"tab_all",        icon:"list"  },
+  { k:"today",   key:"tab_today",      icon:"sun"   },
+  { k:"进行中",   key:"tab_inprogress", icon:"play"  },
+  { k:"待开始",   key:"tab_todo",      icon:"inbox" },
+  { k:"结束",     key:"tab_done",      icon:"check" },
+  { k:"urgent",  key:"tab_urgent",     icon:"zap"   },
+  { k:"overdue", key:"tab_overdue",    icon:"alert" }
 ];
 
 let currentState = "all";
@@ -523,7 +778,7 @@ function clearPending(){ try{ localStorage.removeItem(LS_PENDING); }catch(e){} }
 
 async function loadData(offerRestore){
   const r = await api("/api/todos");
-  if (!r.ok){ toast("加载失败", true); return false; }
+  if (!r.ok){ toast(tr("load_fail"), true); return false; }
   store.items = r.data.items || [];
   store.revision = r.data.revision || "";
   if (r.data.defaults) store.defaults = r.data.defaults;
@@ -548,15 +803,15 @@ function maybeRestorePending(){
   }
   const n = pending.patches.length;
   showConfirm2(
-    "检测到未保存的更改",
-    '<div class="conflict-list">上次关闭页面时有 <b>' + n + '</b> 条更改尚未保存到文件。<br>是否恢复并继续暂存？</div>',
-    "恢复更改", function(){
+    tr("restore_title"),
+    '<div class="conflict-list">' + tr("restore_body", {n:n}) + '</div>',
+    tr("restore_btn"), function(){
       store.patches = pending.patches;
       store.patches.forEach(p => applyPatchLocal(p));
       markDirty(); persistPending();
-      toast("已恢复 " + n + " 条未保存更改，可继续编辑或点「保存更改」落盘");
+      toast(tr("restore_done", {n:n}));
     },
-    "放弃", function(){ clearPending(); toast("已放弃上次未保存的更改"); }
+    tr("discard_btn"), function(){ clearPending(); toast(tr("discard_done")); }
   );
 }
 
@@ -564,12 +819,12 @@ function maybeRestorePending(){
 function render(){
   renderStats(); renderWeek(); renderNav(); renderTagFilter(); renderList(); updateSaveBtn();
   const pending = store.patches.length;
-  $("genTime").textContent = "共 " + store.items.length + " 条待办 · " +
-    (pending ? "本地暂存 " + pending + " 条未保存" : "已同步本地存储");
-  $("sideFoot").innerHTML = "周口径：周一为起点" +
-    (store.week ? "<br>本周 " + esc(store.week.start) + " → " + esc(store.week.end) : "") +
-    "<br>存储格式 schema v" + esc(store.schema == null ? "—" : store.schema) +
-    "<br>默认值可用 env --set defaults.* 覆盖";
+  $("genTime").textContent = tr("gen_n", {n: store.items.length}) + " · " +
+    (pending ? tr("gen_pending", {n: pending}) : tr("gen_synced"));
+  $("sideFoot").innerHTML = tr("week_note") +
+    (store.week ? "<br>" + tr("week_range", {start: esc(store.week.start), end: esc(store.week.end)}) : "") +
+    "<br>" + tr("schema_fmt", {v: esc(store.schema == null ? "—" : store.schema)}) +
+    "<br>" + tr("defaults_hint");
 }
 
 function localStats(){
@@ -591,11 +846,11 @@ function localStats(){
 function renderStats(){
   const s = localStats();
   $("stats").innerHTML =
-    '<div class="stat today"><div class="num">'+s.today+'</div><div class="lbl">今日要处理</div></div>'+
-    '<div class="stat run"><div class="num">'+s.in_progress+'</div><div class="lbl">进行中</div></div>'+
-    '<div class="stat grace"><div class="num">'+s.overdue+'</div><div class="lbl">逾期</div></div>'+
-    '<div class="stat done"><div class="num">'+s.done+'</div><div class="lbl">已结束</div></div>'+
-    '<div class="stat"><div class="num">'+s.total+'</div><div class="lbl">总计</div></div>';
+    '<div class="stat today"><div class="num">'+s.today+'</div><div class="lbl">'+esc(tr("today_stat"))+'</div></div>'+
+    '<div class="stat run"><div class="num">'+s.in_progress+'</div><div class="lbl">'+esc(tr("in_progress_stat"))+'</div></div>'+
+    '<div class="stat grace"><div class="num">'+s.overdue+'</div><div class="lbl">'+esc(tr("overdue_stat"))+'</div></div>'+
+    '<div class="stat done"><div class="num">'+s.done+'</div><div class="lbl">'+esc(tr("done_stat"))+'</div></div>'+
+    '<div class="stat"><div class="num">'+s.total+'</div><div class="lbl">'+esc(tr("total_stat"))+'</div></div>';
 }
 
 function renderWeek(){
@@ -603,9 +858,9 @@ function renderWeek(){
   if (!store.week){ el.style.display = "none"; return; }
   el.style.display = "flex";
   el.innerHTML = ic("cal","sm") +
-    "<span>本周（周一为起点）：" + esc(store.week.start) + " → " + esc(store.week.end) + "</span>" +
-    "<span>· 新增 " + num(store.week.created) + "</span>" +
-    "<span>· 完成 " + num(store.week.done) + "</span>";
+    "<span>" + esc(tr("week_this")) + esc(store.week.start) + " → " + esc(store.week.end) + "</span>" +
+    "<span>· " + esc(tr("week_new")) + " " + num(store.week.created) + "</span>" +
+    "<span>· " + esc(tr("week_done")) + " " + num(store.week.done) + "</span>";
 }
 
 // 同一份导航数据渲染进桌面侧栏 / 平板顶部 / 手机底部 / 手机工具栏
@@ -613,10 +868,10 @@ function renderNav(){
   const s = localStats();
   const counts = { "all": s.total, "today": s.today, "进行中": s.in_progress,
                    "待开始": s.todo, "结束": s.done, "urgent": s.urgent, "overdue": s.overdue };
-  const html = TABS.map(t =>
-    '<button class="navitem' + (t.k === currentState ? " active" : "") + '" data-k="' + esc(t.k) + '">' +
-      ic(t.icon, "sm") + '<span>' + esc(t.label) + '</span>' +
-      '<span class="n">' + (counts[t.k] !== undefined ? counts[t.k] : 0) + '</span>' +
+  const html = TABS.map(tab =>
+    '<button class="navitem' + (tab.k === currentState ? " active" : "") + '" data-k="' + esc(tab.k) + '">' +
+      ic(tab.icon, "sm") + '<span>' + esc(tr(tab.key)) + '</span>' +
+      '<span class="n">' + (counts[tab.k] !== undefined ? counts[tab.k] : 0) + '</span>' +
     '</button>').join("");
   ["navSide","navTop","navBottom"].forEach(id => { const el = $(id); if (el) el.innerHTML = html; });
   document.querySelectorAll(".navitem").forEach(b=>{
@@ -628,7 +883,7 @@ function renderTagFilter(){
   const tagCounts = {};
   store.items.forEach(t => (t.tags||[]).forEach(tg => { tagCounts[tg] = (tagCounts[tg]||0) + 1; }));
   const tags = Object.keys(tagCounts).sort((a,b)=>a.localeCompare(b,"zh"));
-  const opts = '<option value="">全部标签</option>' + tags.map(tg =>
+  const opts = '<option value="">' + esc(tr("all_tags")) + '</option>' + tags.map(tg =>
     '<option value="'+esc(tg)+'">#'+esc(tg)+' ('+tagCounts[tg]+')</option>').join("");
   const cur = currentTag;
   ["tagFilter","tagFilterSide"].forEach(id=>{ const el=$(id); if(el){ el.innerHTML = opts; el.value = cur; } });
@@ -687,7 +942,7 @@ function renderList(){
   emptyEl.style.display = "none";
   const head = currentState === "today"
     ? '<div class="weekbar" style="margin:0 0 10px;grid-column:1/-">' + ic("sun","sm") +
-      '<span>今天要处理 ' + items.length + ' 条：按「逾期 → 停滞 → 今天到期」排序，每条都标了置顶原因。</span></div>'
+      '<span>' + esc(tr("today_head", {n: items.length})) + '</span></div>'
     : "";
   listEl.innerHTML = head + items.map(renderCard).join("");
 }
@@ -699,15 +954,15 @@ function renderCard(t){
   const pinCls = t.overdue_days != null ? "pin-overdue"
                : (t.stall_days != null ? "pin-stalled" : (t.pin != null ? "pin-due" : ""));
   const tags = [];
-  if (t.importance === "重要") tags.push('<span class="tag imp">'+ic("flag","sm")+'重要</span>');
-  if (t.is_urgent !== undefined ? t.is_urgent : localUrgent(t, Date.now())) tags.push('<span class="tag urgent">'+ic("zap","sm")+'紧急</span>');
-  if (t.due) tags.push('<span class="tag due">'+ic("cal","sm")+'截止 ' + esc(t.due) + '</span>');
-  if (t.overdue_days != null) tags.push('<span class="tag warn">'+ic("alert","sm")+'逾期 ' + t.overdue_days + ' 天</span>');
-  else if (t.stall_days != null) tags.push('<span class="tag grace">'+ic("pause","sm")+'停滞 ' + t.stall_days + ' 天</span>');
+  if (t.importance === "重要") tags.push('<span class="tag imp">'+ic("flag","sm")+esc(tr("important"))+'</span>');
+  if (t.is_urgent !== undefined ? t.is_urgent : localUrgent(t, Date.now())) tags.push('<span class="tag urgent">'+ic("zap","sm")+esc(tr("urgent"))+'</span>');
+  if (t.due) tags.push('<span class="tag due">'+ic("cal","sm")+esc(tr("due_by",{d:t.due}))+'</span>');
+  if (t.overdue_days != null) tags.push('<span class="tag warn">'+ic("alert","sm")+esc(tr("overdue_days",{n:t.overdue_days}))+'</span>');
+  else if (t.stall_days != null) tags.push('<span class="tag grace">'+ic("pause","sm")+esc(tr("stalled_days",{n:t.stall_days}))+'</span>');
   (t.tags||[]).forEach(tg => tags.push('<span class="tag lbl">#' + esc(tg) + '</span>'));
-  if (t.__blocked) tags.push('<span class="tag deps">'+ic("link","sm")+'被依赖阻塞</span>');
-  if (t.parent) tags.push('<span class="tag child">'+ic("child","sm")+'子任务</span>');
-  if (isLocal) tags.push('<span class="tag due">未保存</span>');
+  if (t.__blocked) tags.push('<span class="tag deps">'+ic("link","sm")+esc(tr("blocked_by_deps"))+'</span>');
+  if (t.parent) tags.push('<span class="tag child">'+ic("child","sm")+esc(tr("subtask"))+'</span>');
+  if (isLocal) tags.push('<span class="tag due">'+esc(tr("unsaved"))+'</span>');
 
   // 置顶必须解释原因：红=逾期，琥珀=停滞（容错），蓝=今天到期
   let pinHtml = "";
@@ -715,9 +970,9 @@ function renderCard(t){
     const kind = t.overdue_days != null ? "red" : (t.stall_days != null ? "grace" : "info");
     const icon = t.overdue_days != null ? "alert" : (t.stall_days != null ? "pause" : "clock");
     const exits = (t.overdue_days != null
-      ? '<button class="mini-btn mb-go" data-id="'+t.id+'" data-act="push">'+ic("play","sm")+'立即推进</button>' : '') +
-      '<button class="mini-btn mb-plan" data-id="'+t.id+'" data-act="replan">'+ic("cal","sm")+'调整计划</button>';
-    pinHtml = '<div class="pin ' + kind + '"><span class="reason">' + ic(icon,"sm") + esc(t.pin_reason || "置顶") +
+      ? '<button class="mini-btn mb-go" data-id="'+t.id+'" data-act="push">'+ic("play","sm")+esc(tr("advance_now"))+'</button>' : '') +
+      '<button class="mini-btn mb-plan" data-id="'+t.id+'" data-act="replan">'+ic("cal","sm")+esc(tr("reschedule"))+'</button>';
+    pinHtml = '<div class="pin ' + kind + '"><span class="reason">' + ic(icon,"sm") + esc(t.pin_reason || tr("pinned")) +
               '</span><span class="exits">' + exits + '</span></div>';
   }
 
@@ -725,8 +980,8 @@ function renderCard(t){
   let planHtml = "";
   if (t.blocker || t.counter){
     planHtml = '<div class="plan">' +
-      '<div class="row"><span class="k">'+ic("shield","sm")+'障碍</span><span class="v">' + esc(t.blocker || "（未填）") + '</span></div>' +
-      '<div class="row"><span class="k">'+ic("bulb","sm")+'对策</span><span class="v">' + esc(t.counter || "（未填）") + '</span></div>' +
+      '<div class="row"><span class="k">'+ic("shield","sm")+esc(tr("blocker"))+'</span><span class="v">' + esc(t.blocker || tr("not_set")) + '</span></div>' +
+      '<div class="row"><span class="k">'+ic("bulb","sm")+esc(tr("counter"))+'</span><span class="v">' + esc(t.counter || tr("not_set")) + '</span></div>' +
       '</div>';
   }
 
@@ -735,20 +990,20 @@ function renderCard(t){
     // 「用编辑器打开」只在 env.json 配好 editor 且可用时渲染；没配好就不显示，避免点了没反应
     const ed = store.editor || {};
     const edItem = ed.available
-      ? '<button class="ws-item" data-ws-act="editor">'+ic("pencil","sm")+'用' + esc(ed.label || "编辑器") + '打开</button>'
+      ? '<button class="ws-item" data-ws-act="editor">'+ic("pencil","sm")+esc(tr("open_with",{label: ed.label || tr("editor")}))+'</button>'
       : '';
     meta.push(
       '<span class="ws-wrap"><span class="ws">' + ic("folder","sm") + esc(t.workspace) + '</span>' +
       '<div class="ws-menu" data-path="' + esc(t.workspace) + '">' +
-        '<button class="ws-item" data-ws-act="copy">'+ic("copy","sm")+'复制路径</button>' +
-        '<button class="ws-item" data-ws-act="open">'+ic("folder","sm")+'打开目录</button>' +
+        '<button class="ws-item" data-ws-act="copy">'+ic("copy","sm")+esc(tr("copy_path"))+'</button>' +
+        '<button class="ws-item" data-ws-act="open">'+ic("folder","sm")+esc(tr("open_dir"))+'</button>' +
         edItem +
       '</div></span>');
   }
   if (t.date) meta.push('<span>' + ic("cal","sm") + esc(t.date) + '</span>');
-  if (t.created) meta.push('<span>' + ic("clock","sm") + '创建 ' + esc(t.created) + '</span>');
-  if (t.updated) meta.push('<span>' + ic("pencil","sm") + '更新 ' + esc(t.updated) + '</span>');
-  if (!done) meta.push('<span>预计完成日 ' + (t.projected_finish ? esc(t.projected_finish) : "暂无推算") + '</span>');
+  if (t.created) meta.push('<span>' + ic("clock","sm") + esc(tr("created_at",{t:t.created})) + '</span>');
+  if (t.updated) meta.push('<span>' + ic("pencil","sm") + esc(tr("updated_at",{t:t.updated})) + '</span>');
+  if (!done) meta.push('<span>' + (t.projected_finish ? esc(tr("projected",{t:t.projected_finish})) : esc(tr("na"))) + '</span>');
 
   return '<div class="card ' + pinCls + (done ? " state-done" : "") + (isLocal ? " local" : "") + '">' +
       '<div class="mark ' + cls + '">' + ic(STATUS_ICON[t.status] || "tag","sm") + '</div>' +
@@ -758,7 +1013,7 @@ function renderCard(t){
         pinHtml + planHtml +
         (t.note ? '<div class="note">' + esc(t.note) + '</div>' : '') +
         (meta.length ? '<div class="meta">' + meta.join("") + '</div>' : '') +
-        ((t.depends_on && t.depends_on.length) ? '<div class="meta"><span>'+ic("link","sm")+'依赖 ' + esc(t.depends_on.join(', ')) + '</span></div>' : '') +
+        ((t.depends_on && t.depends_on.length) ? '<div class="meta"><span>'+ic("link","sm")+esc(tr("deps",{d:t.depends_on.join(', ')}))+'</span></div>' : '') +
       '</div>' +
       '<div class="actions">' + renderActions(t) + '</div>' +
     '</div>';
@@ -766,9 +1021,9 @@ function renderCard(t){
 
 function renderActions(t){
   const id = t.id;
-  const opts = STATUSES.map(s => '<option value="'+s+'"'+(s===t.status?' selected':'')+'>'+s+'</option>').join("");
-  return '<select class="status-select" data-id="'+id+'" data-act="status" title="修改状态">'+opts+'</select>' +
-         mbtn("编辑", "mb-edit", id, "edit") + mbtn("删除", "mb-del", id, "del");
+  const opts = STATUSES.map(s => '<option value="'+s+'"'+(s===t.status?' selected':'')+'>'+esc(statusLabel(s))+'</option>').join("");
+  return '<select class="status-select" data-id="'+id+'" data-act="status" title="'+esc(tr("change_status"))+'">'+opts+'</select>' +
+         mbtn(esc(tr("edit")), "mb-edit", id, "edit") + mbtn(esc(tr("delete")), "mb-del", id, "del");
 }
 function mbtn(label, cls, id, act){
   return '<button class="mini-btn '+cls+'" data-id="'+id+'" data-act="'+act+'">'+label+'</button>';
@@ -926,19 +1181,19 @@ document.addEventListener("change", function(ev){
 });
 
 async function copyWorkspace(path){
-  try{ await navigator.clipboard.writeText(path); toast("已复制路径"); }
+  try{ await navigator.clipboard.writeText(path); toast(tr("copy_path_done")); }
   catch(e){
-    const ta = document.createElement("textarea");
+    const ta = document.createElementr("textarea");
     ta.value = path; ta.style.position="fixed"; ta.style.opacity="0";
     document.body.appendChild(ta); ta.select();
-    try{ document.execCommand("copy"); toast("已复制路径"); }catch(e2){ toast("复制失败", true); }
+    try{ document.execCommand("copy"); toast(tr("copy_path_done")); }catch(e2){ toast(tr("copy_fail"), true); }
     document.body.removeChild(ta);
   }
 }
 async function openWorkspace(path, kind){
   const r = await api("/api/workspace/" + kind, "POST", { path });
-  if (r.ok && r.data && r.data.ok) toast(r.data.message || "成功");
-  else toast((r.data && r.data.message) || "操作失败", true);
+  if (r.ok && r.data && r.data.ok) toast(r.data.message || tr("op_ok"));
+  else toast((r.data && r.data.message) || tr("op_fail"), true);
 }
 
 // ---------- 本地变更（不写文件，仅暂存） ----------
@@ -1020,7 +1275,7 @@ function localAdvance(id){
   const from = t.status;
   const next = (t.status === "进行中") ? "结束" : "进行中";
   localSetStatus(id, next);
-  toast(from + " → " + next + "（已暂存，点「保存更改」落盘）");
+  toast(tr("advance_toast", {from: from, next: next}));
 }
 
 function localDelete(id){
@@ -1036,7 +1291,7 @@ function localDelete(id){
 // ---------- 保存 ----------
 async function doSave(){
   if (saving) return;
-  if (!store.patches.length){ toast("没有待保存的更改"); return; }
+  if (!store.patches.length){ toastr("没有待保存的更改"); return; }
   saving = true; updateSaveBtn();
   const r = await api("/api/todos/apply-patches", "POST", { revision: store.revision, patches: store.patches });
   saving = false;
@@ -1052,49 +1307,50 @@ async function doSave(){
   store.patches.forEach(p => applyPatchLocal(p));
   markDirty();
 
-  if (d.external_changed) toast("检测到外部修改，更改已合并到最新文件");
+  if (d.external_changed) toast(tr("external_changed"));
   const dup  = failed.filter(f => f.reason === "duplicate");
   const conf = failed.filter(f => f.reason === "conflict");
-  const gone = failed.filter(f => ["not_found","unknown_op","invalid_patch","text 不能为空"].indexOf(f.reason) >= 0);
+  const gone = failed.filter(f => ["not_found","unknown_op","invalid_patch","text must not be empty"].indexOf(f.reason) >= 0);
   gone.forEach(f => { store.patches = store.patches.filter(p => keyOfPatch(p) !== keyOfFail(f)); });
   const keep = failed.filter(f => f.reason === "duplicate" || f.reason === "conflict");
   if (!keep.length){
-    if (!d.external_changed) toast((d.changed || 0) === 0 ? "已是最新状态，无需保存" : "已保存 " + d.saved + " 条更改");
+    if (!d.external_changed) toast((d.changed || 0) === 0 ? tr("already_latest") : tr("saved_n", {n: d.saved}));
     markDirty(); return;
   }
-  showConfirm2("部分更改未保存", buildFailHtml(dup, conf, d.saved, gone.length),
-    "强制应用全部", function(){
+  showConfirm2(tr("partial_title"), buildFailHtml(dup, conf, d.saved, gone.length),
+    tr("force_all"), function(){
       keep.forEach(f => { const p = store.patches.find(x => keyOfPatch(x) === keyOfFail(f)); if (p) p.force = true; });
-      markDirty(); toast("已标记强制应用，正在再次保存…"); doSave();
+      markDirty(); toast(tr("force_marked")); doSave();
     },
-    "取消这些更改", function(){
+    tr("cancel_these"), function(){
       keep.forEach(f => { store.patches = store.patches.filter(p => keyOfPatch(p) !== keyOfFail(f)); });
-      markDirty(); toast("已放弃 " + keep.length + " 条更改");
+      markDirty(); toast(tr("abandoned_n", {n: keep.length}));
     });
   markDirty();
 }
 
 function buildFailHtml(dup, conf, saved, gone){
-  let html = '<div class="conflict-list">已保存 ' + saved + ' 条，以下 ' + (dup.length + conf.length) + ' 条需要处理：</div>';
+  const n = dup.length + conf.length;
+  let html = '<div class="conflict-list">' + tr("fail_head", {s: saved, n: n}) + '</div>';
   if (dup.length){
     html += '<div class="dup-list">' + dup.map(f =>
-      '<div>· 新任务与已有任务重复：' +
-      ((f.duplicates||[]).map(dd => esc(dd.id) + '（' + esc(dd.status) + '）' + esc(dd.text)).join('；') || esc(f.temp_id || f.id || "")) +
+      '<div>' + tr("dup_line", {t:
+        ((f.duplicates||[]).map(dd => esc(dd.id) + ' (' + esc(statusLabel(dd.status)) + ') ' + esc(dd.text)).join('; ') || esc(f.temp_id || f.id || ""))}) +
       '</div>').join("") + '</div>';
   }
   if (conf.length){
     html += '<div class="conflict-list">' + conf.map(f =>
-      '<div>· ' + esc(f.id || f.temp_id || "") + ' 被' +
-      ((f.conflicts||[]).map(c => '[' + (c.kind === "children" ? "未完成子任务" : "前置依赖") + '] ' + esc(c.id) + '（' + esc(c.status) + '）').join('，') || "守卫拦截") +
+      '<div>' + tr("conflict_line", {id: esc(f.id || f.temp_id || ""), list:
+        ((f.conflicts||[]).map(c => '[' + (c.kind === "children" ? tr("conflict_kind_children") : tr("conflict_kind_deps")) + '] ' + esc(c.id) + ' (' + esc(statusLabel(c.status)) + ')').join(', ') || tr("conflict_guard"))}) +
       '</div>').join("") + '</div>';
   }
-  return html + '<div class="hint">「强制应用全部」会忽略重复/依赖守卫重试；「取消这些更改」则放弃这 ' + (dup.length + conf.length) + ' 条。</div>';
+  return html + '<div class="hint">' + tr("fail_hint", {n: n}) + '</div>';
 }
 
 // ---------- 新增 / 编辑 ----------
 function openCreate(){
   editingId = null;
-  $("taskModalTitle").innerHTML = ic("plus") + "新增待办";
+  $("taskModalTitle").innerHTML = ic("plus") + esc(tr("new_todo"));
   ["f_text","f_due","f_date","f_workspace","f_note","f_blocker","f_counter","f_docs","f_links","f_tags","f_deps","f_parent"]
     .forEach(id=>$(id).value="");
   // 默认值只是预填：来自 env.json 的 defaults，随时可覆盖
@@ -1106,9 +1362,9 @@ function openCreate(){
 
 function openEdit(id){
   const t = findItem(id);
-  if (!t){ toast("任务不存在", true); return; }
+  if (!t){ toast(tr("task_not_found"), true); return; }
   editingId = id;
-  $("taskModalTitle").innerHTML = ic("pencil") + "编辑 " + esc(id);
+  $("taskModalTitle").innerHTML = ic("pencil") + esc(tr("edit_task", {id: id}));
   $("f_text").value = t.text || "";
   $("f_status").value = t.status || "进行中";
   $("f_importance").value = t.importance || "不重要";
@@ -1139,50 +1395,50 @@ function collectForm(){
 
 function submitTask(){
   const form = collectForm();
-  if (!form.text){ toast("任务内容不能为空", true); return; }
+  if (!form.text){ toast(tr("text_required"), true); return; }
   if (editingId){
     localUpdate(editingId, form);
     closeModal("taskOverlay");
-    toast("已暂存修改，点「保存更改」落盘");
+    toast(tr("staged_edit"));
     return;
   }
   const exact = store.items.find(x => (x.text||"").trim() === form.text);
   if (exact){
-    showConfirm2("检测到相同任务",
-      '<div class="dup-list">· [相同] ' + esc(exact.id) + '（' + esc(exact.status) + '）' + esc(exact.text) + '</div>' +
-      '<div class="conflict-list">仍要新建吗？（保存时后端会再次做完整查重）</div>',
-      "仍要新建", function(){ localCreate(form); closeModal("taskOverlay"); toast("已暂存新增，点「保存更改」落盘"); },
-      "取消");
+    showConfirm2(tr("dup_title"),
+      '<div class="dup-list">' + tr("dup_body", {id: esc(exact.id), status: esc(statusLabel(exact.status)), text: esc(exact.text)}) + '</div>' +
+      '<div class="conflict-list">' + tr("dup_ask") + '</div>',
+      tr("create_anyway"), function(){ localCreate(form); closeModal("taskOverlay"); toast(tr("staged_new")); },
+      tr("cancel"));
     return;
   }
   form.date = $("f_date").value.trim();
   localCreate(form);
   closeModal("taskOverlay");
-  toast("已暂存新增，点「保存更改」落盘");
+  toast(tr("staged_new"));
 }
 
 // ---------- 调整计划（改截止）：逾期任务的第二个出口 ----------
 function openDue(id, cur){
   dueEditId = id;
   $("d_due").value = cur || "";
-  $("d_hint").textContent = "支持自然语言（明天 / 下周一 / 3天后 / 2026-10-20）；保存后由服务端解析回显。";
+  $("d_hint").textContent = tr("due_hint");
   openModal("dueOverlay"); $("d_due").focus();
 }
 function saveDue(clear){
   const id = dueEditId;
   if (!findItem(id)){ closeModal("dueOverlay"); return; }
   const raw = $("d_due").value.trim();
-  if (!clear && !raw){ toast("请填写新的截止时间，或点「清除截止」", true); return; }
+  if (!clear && !raw){ toast(tr("due_required"), true); return; }
   localUpdate(id, { due: clear ? "" : raw });
   closeModal("dueOverlay");
-  toast(clear ? "已清除截止日（已暂存）" : "已调整计划：" + raw + "（已暂存，保存后回显为标准格式）");
+  toast(clear ? tr("due_cleared") : tr("due_rescheduled", {d: raw}));
 }
 
 // ---------- 删除 ----------
 function askDelete(id, text){
-  showConfirm2("确认删除该待办？",
-    '<div class="conflict-list">' + esc(id) + '：' + esc(text) + '<br>删除后将同时清理其他任务对它的依赖/父任务引用。</div>',
-    "删除", function(){ localDelete(id); toast("已暂存删除，点「保存更改」落盘"); }, "取消");
+  showConfirm2(tr("del_title"),
+    '<div class="conflict-list">' + tr("del_body", {id: esc(id), text: esc(text)}) + '</div>',
+    tr("del_btn"), function(){ localDelete(id); toast(tr("staged_delete")); }, tr("cancel"));
 }
 
 // ---------- 弹窗 ----------
@@ -1192,15 +1448,15 @@ function showConfirm(title, bodyHtml, okLabel, okFn){
   confirmAction = okFn || null; confirmAltAction = null;
   $("confirmCancelBtn").style.display = "none"; $("confirmAltBtn").style.display = "none";
   $("confirmTitle").textContent = title; $("confirmBody").innerHTML = bodyHtml;
-  $("confirmOkBtn").textContent = okLabel || "确定";
+  $("confirmOkBtn").textContent = okLabel || tr("ok");
   openModal("confirmOverlay");
 }
 function showConfirm2(title, bodyHtml, okLabel, okFn, altLabel, altFn){
   confirmAction = okFn || null; confirmAltAction = altFn || null;
   $("confirmAltBtn").style.display = altFn ? "inline-flex" : "none";
-  $("confirmAltBtn").textContent = altLabel || "取消";
+  $("confirmAltBtn").textContent = altLabel || tr("cancel");
   $("confirmTitle").textContent = title; $("confirmBody").innerHTML = bodyHtml;
-  $("confirmOkBtn").textContent = okLabel || "确定";
+  $("confirmOkBtn").textContent = okLabel || tr("ok");
   openModal("confirmOverlay");
 }
 function confirmOk(){ const fn = confirmAction; confirmAction = null; closeModal("confirmOverlay"); if (fn) fn(); }
@@ -1223,7 +1479,7 @@ function setupAutosave(){
 function onAutosaveChange(sel){
   try{ localStorage.setItem(LS_AUTOSAVE, String(parseInt(sel.value, 10) || 0)); }catch(e){}
   setupAutosave();
-  toast(sel.value === "0" ? "已关闭自动保存" : "自动保存间隔设为 " + sel.value + " 分钟");
+  toast(sel.value === "0" ? tr("autosave_off_toast") : tr("autosave_set", {n: sel.value}));
 }
 
 function updateSaveBtn(){
@@ -1231,9 +1487,9 @@ function updateSaveBtn(){
   $("dirtyBadge").textContent = n;
   $("saveBtn").classList.toggle("dirty", n > 0 && !saving);
   const sb = $("saveState");
-  if (saving) sb.textContent = "保存中…";
-  else if (n > 0) sb.textContent = "有 " + n + " 条未保存更改";
-  else if (store.lastSavedAt){ const d = new Date(store.lastSavedAt); sb.textContent = "已保存 " + pad2(d.getHours()) + ":" + pad2(d.getMinutes()); }
+  if (saving) sb.textContent = tr("saving");
+  else if (n > 0) sb.textContent = tr("dirty_n", {n: n});
+  else if (store.lastSavedAt){ const d = new Date(store.lastSavedAt); sb.textContent = tr("saved_at", {t: pad2(d.getHours()) + ":" + pad2(d.getMinutes())}); }
   else sb.textContent = "";
 }
 
@@ -1272,8 +1528,9 @@ $("emptyIcon").innerHTML = ic("inboxEmpty","lg");
 $("lblBlocker").innerHTML = ic("shield","sm");
 $("lblCounter").innerHTML = ic("bulb","sm");
 $("dueIcon").innerHTML = ic("cal","lg");
-$("newBtnTop").innerHTML = ic("plus","sm") + "新增待办";
-$("newEntryBottom").innerHTML = ic("plus","lg") + "新增待办（也可以点这里）";
+$("newBtnTop").innerHTML = ic("plus","sm") + esc(tr("new_todo"));
+$("newEntryBottom").innerHTML = ic("plus","lg") + esc(tr("new_todo_bottom"));
+applyLang();
 setupAutosave();
 loadData(true);
 </script>

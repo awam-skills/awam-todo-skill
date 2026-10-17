@@ -376,7 +376,7 @@
       </div>
     </div>
     <div class="modal-foot">
-      <button class="btn btn-ghost" id="cancelTaskBtn" onclick="closeModal('taskOverlay')">取消</button>
+      <button class="btn btn-ghost" id="cancelTaskBtn" onclick="closeTaskModal()">取消</button>
       <button class="btn btn-primary" id="taskSaveBtn" onclick="submitTask()">保存</button>
     </div>
   </div>
@@ -423,6 +423,7 @@ const LS_BASELINE = "awam-todo:baseline";
 const LS_PENDING  = "awam-todo:pending";
 const LS_AUTOSAVE = "awam-todo:autosave-min";
 const LS_LANG = "awam-todo:lang";
+const LS_DRAFT = "awam-todo:draft";
 
 // ---------- 国际化（zh / en，默认英文；无外部库，词表内联、断网可用） ----------
 const I18N = {
@@ -1500,6 +1501,7 @@ function openCreate(){
   $("f_status").value = store.defaults.status || "进行中";
   $("f_importance").value = store.defaults.importance || "不重要";
   $("f_urgent").value = store.defaults.urgent || "不紧急";
+  restoreDraft(); // 恢复上次未保存的草稿（若有）
   openModal("taskOverlay"); $("f_text").focus();
 }
 
@@ -1550,13 +1552,14 @@ function submitTask(){
     showConfirm2(tr("dup_title"),
       '<div class="dup-list">' + tr("dup_body", {id: esc(exact.id), status: esc(statusLabel(exact.status)), text: esc(exact.text)}) + '</div>' +
       '<div class="conflict-list">' + tr("dup_ask") + '</div>',
-      tr("create_anyway"), function(){ localCreate(form); closeModal("taskOverlay"); toast(tr("staged_new")); },
+      tr("create_anyway"), function(){ localCreate(form); closeModal("taskOverlay"); clearDraft(); toast(tr("staged_new")); },
       tr("cancel"));
     return;
   }
   form.date = $("f_date").value.trim();
   localCreate(form);
   closeModal("taskOverlay");
+  clearDraft(); // 保存成功即丢弃草稿，下次新增从空白开始
   toast(tr("staged_new"));
 }
 
@@ -1604,8 +1607,36 @@ function showConfirm2(title, bodyHtml, okLabel, okFn, altLabel, altFn){
 }
 function confirmOk(){ const fn = confirmAction; confirmAction = null; closeModal("confirmOverlay"); if (fn) fn(); }
 function confirmAlt(){ const fn = confirmAltAction; confirmAltAction = null; closeModal("confirmOverlay"); if (fn) fn(); }
-document.getElementById("taskOverlay").addEventListener("click", e=>{ if (e.target.id === "taskOverlay") closeModal("taskOverlay"); });
+// 新增/编辑弹框：点击遮罩不再关闭，避免鼠标移出框外误触丢失已填内容（用「取消」或 Esc 主动关闭）
 document.getElementById("dueOverlay").addEventListener("click", e=>{ if (e.target.id === "dueOverlay") closeModal("dueOverlay"); });
+
+// ---------- 新增弹框草稿暂存：未保存时保留已填内容，下次打开自动恢复 ----------
+const DRAFT_FIELDS = ["f_text","f_status","f_importance","f_urgent","f_due","f_date","f_workspace","f_note","f_blocker","f_counter","f_docs","f_links","f_tags","f_deps","f_parent"];
+let draftTimer = null;
+function saveDraft(){
+  if (editingId) return; // 仅暂存“新增”表单，编辑态不覆盖草稿
+  try{
+    const d = {}; let any = false;
+    DRAFT_FIELDS.forEach(id => { const v = $(id).value; if (v !== ""){ d[id] = v; any = true; } });
+    if (any) localStorage.setItem(LS_DRAFT, JSON.stringify(d));
+    else localStorage.removeItem(LS_DRAFT);
+  }catch(e){}
+}
+function scheduleDraftSave(){ clearTimeout(draftTimer); draftTimer = setTimeout(saveDraft, 400); }
+function loadDraft(){ try{ return JSON.parse(localStorage.getItem(LS_DRAFT) || "null"); }catch(e){ return null; } }
+function restoreDraft(){
+  const d = loadDraft();
+  if (!d || typeof d !== "object") return;
+  DRAFT_FIELDS.forEach(id => { if (typeof d[id] === "string" && d[id] !== "") $(id).value = d[id]; });
+}
+function clearDraft(){ try{ localStorage.removeItem(LS_DRAFT); }catch(e){} }
+function closeTaskModal(){
+  if (!$("taskOverlay").classList.contains("open")) return; // 弹框未打开时不做任何事
+  clearTimeout(draftTimer);
+  saveDraft(); // 未保存即关闭（取消 / Esc）：保留已填内容，下次打开自动加载
+  closeModal("taskOverlay");
+}
+DRAFT_FIELDS.forEach(id => { const el = $(id); el.addEventListener("input", scheduleDraftSave); el.addEventListener("change", scheduleDraftSave); });
 
 function onSearch(v){ currentKeyword = v.trim(); render(); }
 function onTagFilter(v){ currentTag = v; render(); }
@@ -1653,7 +1684,7 @@ window.addEventListener("pagehide", function(){
   }catch(e){}
 });
 document.addEventListener("keydown", e=>{
-  if (e.key === "Escape"){ closeModal("taskOverlay"); closeModal("dueOverlay"); closeModal("confirmOverlay"); }
+  if (e.key === "Escape"){ closeTaskModal(); closeModal("dueOverlay"); closeModal("confirmOverlay"); }
 });
 document.getElementById("taskOverlay").addEventListener("keydown", e=>{
   if (e.key === "Enter" && e.target.tagName !== "TEXTAREA"){ e.preventDefault(); submitTask(); }

@@ -1492,6 +1492,23 @@ function buildFailHtml(dup, conf, saved, gone){
 }
 
 // ---------- 新增 / 编辑 ----------
+
+// 新增成功后彻底丢弃“新建草稿”：取消等待中的 400ms 防抖写入定时器，
+// 否则它会在 clearDraft() 之后又把刚保存的内容写回 localStorage，
+// 导致下次打开新建框时残留上一条已进列表的待办（新建框里留着没有用了）。
+function resetCreateForm(){
+  ["f_text","f_due","f_date","f_workspace","f_note","f_blocker","f_counter","f_docs","f_links","f_tags","f_deps","f_parent"]
+    .forEach(id=>{ const el = $(id); if (el) el.value=""; });
+  $("f_status").value = store.defaults.status || "进行中";
+  $("f_importance").value = store.defaults.importance || "不重要";
+  $("f_urgent").value = store.defaults.urgent || "不紧急";
+}
+function discardCreateDraft(){
+  clearTimeout(draftTimer);   // 取消等待中的防抖写入，避免它覆盖本次清除
+  resetCreateForm();          // 清空输入框，双保险
+  clearDraft();               // 移除 localStorage 草稿
+}
+
 function openCreate(){
   editingId = null;
   $("taskModalTitle").innerHTML = ic("plus") + esc(tr("new_todo"));
@@ -1552,14 +1569,14 @@ function submitTask(){
     showConfirm2(tr("dup_title"),
       '<div class="dup-list">' + tr("dup_body", {id: esc(exact.id), status: esc(statusLabel(exact.status)), text: esc(exact.text)}) + '</div>' +
       '<div class="conflict-list">' + tr("dup_ask") + '</div>',
-      tr("create_anyway"), function(){ localCreate(form); closeModal("taskOverlay"); clearDraft(); toast(tr("staged_new")); },
+      tr("create_anyway"), function(){ localCreate(form); closeModal("taskOverlay"); discardCreateDraft(); toast(tr("staged_new")); },
       tr("cancel"));
     return;
   }
   form.date = $("f_date").value.trim();
   localCreate(form);
   closeModal("taskOverlay");
-  clearDraft(); // 保存成功即丢弃草稿，下次新增从空白开始
+  discardCreateDraft(); // 保存成功即彻底丢弃草稿（含取消待触发的防抖写入），下次新增从空白开始
   toast(tr("staged_new"));
 }
 

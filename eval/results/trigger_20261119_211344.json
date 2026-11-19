@@ -1,0 +1,57 @@
+{
+  "metrics": {
+    "accuracy": 1.0,
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1": 1.0,
+    "tp": 4,
+    "fp": 0,
+    "fn": 0,
+    "tn": 3
+  },
+  "question": null,
+  "rows": [
+    {
+      "text": "记个待办：明天下午三点前交报告",
+      "expect": true,
+      "predicted": true,
+      "raw": "yes"
+    },
+    {
+      "text": "把这条待办标为紧急",
+      "expect": true,
+      "predicted": true,
+      "raw": "yes"
+    },
+    {
+      "text": "看看我今天有哪些逾期的任务",
+      "expect": true,
+      "predicted": true,
+      "raw": "yes"
+    },
+    {
+      "text": "给待办加一个依赖：做完 A 才能做 B",
+      "expect": true,
+      "predicted": true,
+      "raw": "yes"
+    },
+    {
+      "text": "帮我写一封邮件通知同事",
+      "expect": false,
+      "predicted": false,
+      "raw": "no"
+    },
+    {
+      "text": "在日历上创建一个会议",
+      "expect": false,
+      "predicted": false,
+      "raw": "no"
+    },
+    {
+      "text": "查一下今天的天气",
+      "expect": false,
+      "predicted": false,
+      "raw": "no"
+    }
+  ]
+}

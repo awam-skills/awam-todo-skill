@@ -1,0 +1,36 @@
+{
+  "_readme": "awam-skill-eval 生成：意图路由评测集。正例=描述触发场景；负例=confusable sibling 的「看起来像但不该触发」边界例。只读评测资产。",
+  "_skill": "awam-todo",
+  "_n_pos": 4,
+  "_n_neg": 3,
+  "queries": [
+    {
+      "text": "记个待办：明天下午三点前交报告",
+      "expect_trigger": true
+    },
+    {
+      "text": "把这条待办标为紧急",
+      "expect_trigger": true
+    },
+    {
+      "text": "看看我今天有哪些逾期的任务",
+      "expect_trigger": true
+    },
+    {
+      "text": "给待办加一个依赖：做完 A 才能做 B",
+      "expect_trigger": true
+    },
+    {
+      "text": "帮我写一封邮件通知同事",
+      "expect_trigger": false
+    },
+    {
+      "text": "在日历上创建一个会议",
+      "expect_trigger": false
+    },
+    {
+      "text": "查一下今天的天气",
+      "expect_trigger": false
+    }
+  ]
+}

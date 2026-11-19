@@ -1,0 +1,9 @@
+# Golden shape for a successful `todo.py add --text "背完2000个单词" --due "下周一" --force`
+# Illustrative: task ID, date, due and counts vary by run date / storage state.
+force-created T-20261119-001: 背完2000个单词
+  date: 2026-11-19 | importance: 不重要 | status: 进行中 | urgent: 不紧急
+  due: 2026-11-23
+  projected finish: N/A (no progress records)
+  index updated: todo=0 in_progress=1 urgent=0
+  Suggested tags: 学习;英语 (not written yet; to confirm use: add --update-id T-20261119-001 --tags "学习;英语")
+    evidence: keyword match: 单词

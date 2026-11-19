@@ -1,0 +1,20 @@
+{
+  "_note": "Golden shape for `todo.py triage --text \"明天下午三点背完2000个单词\"`. Values are illustrative; due/suggested_tags depend on the current date and keyword table.",
+  "ok": true,
+  "action": "add",
+  "confidence": "high",
+  "need_confirm": false,
+  "reasons": [],
+  "text": "明天下午三点背完2000个单词",
+  "target": null,
+  "candidates": [],
+  "status": null,
+  "fields": {
+    "due": "明天"
+  },
+  "suggested_tags": [
+    "学习",
+    "英语"
+  ],
+  "fallback_action": null
+}

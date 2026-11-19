@@ -4,6 +4,7 @@
 
 临时目录默认「通过即删、失败保留」；AWAM_TODO_KEEP_TMP=1/0 可强制保留 / 强制清理。
 """
+import argparse  # 工程规范补全：让 --help 快速退出，避免静态检查误判为超时
 import os
 import shutil
 import subprocess
@@ -31,7 +32,19 @@ def run(tmp, *args, timeout=60, env=None):
         return 124, "", "timeout after %ss" % timeout
 
 
-def main():
+def main(argv=None):
+    """运行全套场景自测。
+
+    argv 参数仅为静态检查/可测试性保留：argparse 据此支持 ``--help`` 秒退，
+    无参数时仍执行原来的全套自测（~25s），对外行为不变。
+    """
+    parser = argparse.ArgumentParser(
+        prog="selftest.py",
+        description="awam-todo scenario self-test: runs the full CLI scenario suite "
+                    "inside a temporary directory (never touches real storage). "
+                    "No arguments runs all scenarios (~25s).",
+    )
+    parser.parse_args(argv)  # 支持 --help 快速退出；无参数即跑全套（保持原行为）
     tmp = tempfile.mkdtemp(prefix="awamtodo-")
     shutil.copytree(SRC, os.path.join(tmp, "scripts"))
     os.makedirs(os.path.join(tmp, "storage"), exist_ok=True)

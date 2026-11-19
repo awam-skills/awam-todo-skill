@@ -574,3 +574,41 @@ def capture_flow(cfg):
     if not dlg:
         return
     _run_with_retry(proposal, dlg, cfg)
+
+
+# ---------------------------------------------------------------------------
+# 工程规范补全（源自 skill-tester 静态检查修复）：
+# 下面新增的 argparse 入口与 __main__ 保护，只服务于「直接运行本文件」的场景，
+# 供 --help 展示与静态结构校验识别标准 CLI 形态。本模块被 web/server.py
+# import 时的行为完全不变，也不会因此启动捕获服务或热键监听。
+# ---------------------------------------------------------------------------
+def _cli():
+    """命令行入口。
+
+    捕获服务本身不是独立 CLI：它由 web/server.py import 后在 UI 进程内以
+    ``capture_flow(cfg)`` / 热键监听方式调用，直接运行本文件不会启动捕获。
+    这里仅提供 `--help` 说明（供文档与静态检查使用），不改变 import 行为。
+    """
+    import argparse
+    parser = argparse.ArgumentParser(
+        prog="capture.py",
+        description="awam-todo capture service module — global hotkey reads clipboard, "
+                    "runs triage, then shows system dialogs for confirmation/input. "
+                    "This module is imported by web/server.py and is not run as a "
+                    "standalone CLI; the real service is started from the web UI.",
+    )
+    parser.add_argument(
+        "--print-config-help", action="store_true",
+        help="print where the capture service is configured (env.json -> capture) "
+             "and exit without starting anything",
+    )
+    args = parser.parse_args()
+    if args.print_config_help:
+        print("Capture service config: env.json -> \"capture\" section.")
+        print("Start/stop it from the awam-todo web UI Settings; it runs inside the "
+              "web server process (no standalone daemon).")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(_cli())

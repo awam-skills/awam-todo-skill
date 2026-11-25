@@ -104,8 +104,14 @@ DEFAULT_STORAGE_DIR = os.path.join(SKILL_DIR, "storage")
 INDEX_PATH = os.path.join(SKILL_DIR, "index.json")
 ENV_PATH = os.path.join(SKILL_DIR, "env.json")
 
-STATUS_MARKS = {"维护": "[ ]", "进行中": "[~]", "结束": "[x]", "待开始": "[ ]", "其他": "[ ]"}
+STATUS_MARKS = {"维护": "[ ]", "进行中": "[~]", "结束": "[x]", "待开始": "[ ]", "其他": "[ ]",
+                "已取消": "[-]", "阻塞": "[!]"}
 STATUS_SET = set(STATUS_MARKS.keys())
+# 终态：任务已翻篇、不再活跃。已取消与结束一样：不参与置顶/紧急/逾期/停滞，
+# 不阻塞依赖它的任务，且计入「文件可归档」的判定；区别是它不计入 done 统计。
+TERMINAL_STATUSES = {"结束", "已取消"}
+# 推进态：置为该状态时触发依赖/子任务硬检查
+ADVANCE_STATUSES = ("进行中", "结束")
 DEFAULT_STATUS = "进行中"
 IMPORTANCE_SET = {"重要", "不重要"}
 DEFAULT_IMPORTANCE = "不重要"
@@ -173,6 +179,11 @@ TAG_WORKSPACE_RULES = (
     ("数据", ("data", "dataset", "db", "sql", "etl")),
     ("交易", ("stock", "trade", "quant", "futures")),
 )
+
+
+def _is_finished(t):
+    """任务是否已翻篇（终态：结束 / 已取消）。"""
+    return (t.get("status") or "") in TERMINAL_STATUSES
 
 
 def _norm_status(v):
@@ -849,8 +860,8 @@ def _days_unknown(v):
 
 
 def _due_in_days(t, now):
-    """距截止还有几天（0 = 今天到期）；无截止或已完成返回 None。"""
-    if t.get("status") == "结束":
+    """距截止还有几天（0 = 今天到期）；无截止或已翻篇（结束/已取消）返回 None。"""
+    if _is_finished(t):
         return None
     dv = _due_value(t.get("due"))
     if dv is None:
@@ -859,9 +870,9 @@ def _due_in_days(t, now):
 
 
 def _overdue_days(t, now):
-    """逾期天数：仅当「未完成 + 截止已过（按自然日）」时返回 >=1 的整数，否则 None。
+    """逾期天数：仅当「未翻篇 + 截止已过（按自然日）」时返回 >=1 的整数，否则 None。
     今天到期但时刻已过不算逾期（避免输出「逾期 0 天」）。"""
-    if t.get("status") == "结束":
+    if _is_finished(t):
         return None
     dv = _due_value(t.get("due"))
     if dv is None:
@@ -1036,7 +1047,7 @@ def _monthly_archive(now=None, months=None, include_current=False, dry_run=False
         data = files[date]
         if not data["tasks"]:
             continue
-        if not all(t["status"] == "结束" for t in data["tasks"]):
+        if not all(_is_finished(t) for t in data["tasks"]):
             continue
         month = _month_of(date)
         if months is not None:
@@ -1092,6 +1103,7 @@ def build_index(now=None):
     _auto_monthly_archive(now)  # 进入新月 → 自动归档上月可归档记录（每进程一次）
     files = _scan_files()
     urgent, in_progress, todo_, done = [], [], [], []
+    cancelled = []
     today, overdue = [], []
     archived_files = []
     total = done_total = 0
@@ -1144,19 +1156,21 @@ def build_index(now=None):
                 done_total += 1
                 if in_this_week(t.get("updated") or t.get("created")):
                     week_done += 1
+            elif t["status"] == "已取消":
+                cancelled.append(item)
             elif t["status"] == "进行中":
                 in_progress.append(item)
             else:
                 todo_.append(item)
-            if _is_urgent(t, now) and t["status"] != "结束":
+            if _is_urgent(t, now) and not _is_finished(t):
                 urgent.append(item)
             if in_this_week(t.get("created")):
                 week_created += 1
-            if pin is not None and t["status"] != "结束":
+            if pin is not None and not _is_finished(t):
                 today.append(item)
             if od is not None:
                 overdue.append(item)
-    for bucket in (urgent, in_progress, todo_, done, today, overdue):
+    for bucket in (urgent, in_progress, todo_, cancelled, done, today, overdue):
         bucket.sort(key=item_key)
     monthly = _monthly_archives_info()
     index = {
@@ -1164,7 +1178,8 @@ def build_index(now=None):
         "generated": _fmt(now),
         "summary": {
             "todo": len(todo_), "in_progress": len(in_progress), "urgent": len(urgent),
-            "done": len(done), "total": total, "archived_files": len(archived_files),
+            "done": len(done), "cancelled": len(cancelled), "total": total,
+            "archived_files": len(archived_files),
             "files": len(files), "today": len(today), "overdue": len(overdue),
             "week_created": week_created, "week_done": week_done,
             "monthly_archives": len(monthly),
@@ -1179,6 +1194,7 @@ def build_index(now=None):
         "overdue": overdue,
         "in_progress": in_progress,
         "todo": todo_,
+        "cancelled": cancelled,
         "done": done,
         "archived_files": archived_files,
         "monthly_archives": monthly,
@@ -1237,7 +1253,7 @@ def find_duplicates(text, exclude_id=None):
 
     def rank(item):
         t = item["task"]
-        done = 1 if t.get("status") == "结束" else 0
+        done = 1 if _is_finished(t) else 0
         created = t.get("created") or ""
         return (done, -item["score"], created)
 
@@ -1544,7 +1560,7 @@ def _print_task_summary(prefix, tid, date, task, idx):
         print("  pinned: %s" % reason)
     if _overdue_days(task, _n) is not None:
         print("  exits: advance now → start/done %s; reschedule → postpone %s <new time>" % (tid, tid))
-    if _projected_finish(task, _n) is None and task["status"] != "结束":
+    if _projected_finish(task, _n) is None and not _is_finished(task):
         print("  projected finish: N/A (no progress records)")
     print("  index updated: todo=%d in_progress=%d urgent=%d" % (
         idx["summary"]["todo"], idx["summary"]["in_progress"], idx["summary"]["urgent"]))
@@ -1588,7 +1604,7 @@ def _update_existing_task(tid, args, now):
     rc = _guard_children_done(tid, t["status"], args.force)
     if rc != 0:
         return rc
-    all_done = all(x["status"] == "结束" for x in data["tasks"])
+    all_done = all(_is_finished(x) for x in data["tasks"])
     data["archived"] = all_done
     save_file(date, data["archived"], data["tasks"])
     idx = build_index(now)
@@ -1734,6 +1750,8 @@ TRIAGE_STATUS_GROUPS = (
     ("进行中", ("开始", "推进", "继续", "进行中", "start", "begin")),
     ("待开始", ("待开始", "还没做", "重新打开", "恢复", "reopen")),
     ("维护", ("暂停", "挂起", "维护")),
+    ("已取消", ("已取消", "取消", "放弃", "不做了", "cancelled", "canceled")),
+    ("阻塞", ("阻塞", "被卡住", "卡住了", "blocked")),
 )
 TRIAGE_TARGET_MIN = 0.55   # 达到该相似度才算「指代已锁定」
 TRIAGE_CANDIDATE_MIN = 0.30  # 达到该相似度才进候选列表（供用户挑选）
@@ -2103,7 +2121,7 @@ def _has_unfinished_deps(t):
     """任务 t 是否存在未结束（或不存在）的直接依赖。"""
     for did in t.get("depends_on") or []:
         _, _, dtask = _find_task(did)
-        if dtask is None or dtask["status"] != "结束":
+        if dtask is None or not _is_finished(dtask):
             return True
     return False
 
@@ -2111,15 +2129,15 @@ def _has_unfinished_deps(t):
 def _guard_by_deps(dep_ids, target_status, force):
     """依赖硬检查（死的规则）：target_status 为「进行中/结束」且存在未结束的直接依赖时，
     拒绝推进并返回 EXIT_NEEDS_CONFIRM（exit 3），由会话中的 AI 向用户确认后决定是否 --force。
-    force=True 或目标状态非推进态（待开始/维护/其他）时不拦截。返回 0=通过。"""
-    if force or target_status not in ("进行中", "结束"):
+    force=True 或目标状态非推进态（待开始/维护/其他/已取消/阻塞）时不拦截。返回 0=通过。"""
+    if force or target_status not in ADVANCE_STATUSES:
         return 0
     conflicts = []
     for did in dep_ids or []:
         ddate, _, dtask = _find_task(did)
         if dtask is None:
             conflicts.append({"id": did, "status": "(missing)", "text": "", "date": ""})
-        elif dtask["status"] != "结束":
+        elif not _is_finished(dtask):
             conflicts.append({"id": did, "status": dtask["status"], "text": dtask["text"], "date": ddate})
     if conflicts:
         print("Dependency check failed (prerequisites not finished; cannot advance to “%s”):" % target_status)
@@ -2158,7 +2176,7 @@ def _guard_children_done(tid, target_status, force):
     EXIT_NEEDS_CONFIRM（exit 3），由 AI 向用户确认后决定是否 --force。返回 0=通过。"""
     if force or target_status != "结束":
         return 0
-    unfinished = [(date, t) for date, t in _children_of(tid) if t["status"] != "结束"]
+    unfinished = [(date, t) for date, t in _children_of(tid) if not _is_finished(t)]
     if unfinished:
         print("Subtask check failed (unfinished subtasks exist; the parent cannot be marked done):")
         for date, t in unfinished:
@@ -2204,7 +2222,7 @@ def cmd_deparent(args):
     parent_id = t["parent"]
     t["parent"] = ""
     t["updated"] = _fmt(dt.datetime.now())
-    data["archived"] = all(x["status"] == "结束" for x in data["tasks"])
+    data["archived"] = all(_is_finished(x) for x in data["tasks"])
     save_file(date, data["archived"], data["tasks"])
     build_index()
     print("%s detached from parent %s." % (args.id, parent_id))
@@ -2257,7 +2275,7 @@ def cmd_dep(args):
     if changed:
         t["depends_on"] = deps
         t["updated"] = _fmt(dt.datetime.now())
-        data["archived"] = all(x["status"] == "结束" for x in data["tasks"])
+        data["archived"] = all(_is_finished(x) for x in data["tasks"])
         save_file(date, data["archived"], data["tasks"])
         build_index()
 
@@ -2283,7 +2301,7 @@ def _delete_task(tid, now=None, quiet=False):
         return 2
     data["tasks"] = [x for x in data["tasks"] if x.get("id") != tid]
     if data["tasks"]:
-        all_done = all(x["status"] == "结束" for x in data["tasks"])
+        all_done = all(_is_finished(x) for x in data["tasks"])
         data["archived"] = all_done
         save_file(date, data["archived"], data["tasks"])
     else:
@@ -2304,7 +2322,7 @@ def _delete_task(tid, now=None, quiet=False):
                 x["updated"] = _fmt(now)
                 changed = True
         if changed:
-            d2_all = all(y["status"] == "结束" for y in d2data["tasks"])
+            d2_all = all(_is_finished(y) for y in d2data["tasks"])
             d2data["archived"] = d2_all
             save_file(d2, d2data["archived"], d2data["tasks"])
     build_index(now)
@@ -2331,7 +2349,7 @@ def _set_status(tid, status, force=False):
     t["status"] = status
     t["updated"] = _fmt(dt.datetime.now())
     # 归档不变量：归档 ⇔ 该文件所有任务均为 结束
-    all_done = all(x["status"] == "结束" for x in data["tasks"])
+    all_done = all(_is_finished(x) for x in data["tasks"])
     data["archived"] = all_done
     save_file(date, data["archived"], data["tasks"])
     msg = "%s -> %s (%s)" % (tid, status, t["text"])
@@ -2355,7 +2373,7 @@ def cmd_work(args):
         return rc
     t["status"] = "进行中"
     t["updated"] = _fmt(dt.datetime.now())
-    all_done = all(x["status"] == "结束" for x in data["tasks"])
+    all_done = all(_is_finished(x) for x in data["tasks"])
     data["archived"] = all_done
     save_file(date, data["archived"], data["tasks"])
     build_index()
@@ -2389,6 +2407,13 @@ def cmd_reopen(args):
     return _set_status(args.id, "待开始")
 
 
+def cmd_set_status(args):
+    """通用状态切换入口：status <id> <新状态>。
+    推进到 进行中/结束 时照走依赖与子任务硬检查（--force 跊过，需用户确认）；
+    设为 已取消（终态，不再活跃）/ 阻塞（未完成，被卡住）等非推进态时不拦截。"""
+    return _set_status(args.id, args.status, args.force)
+
+
 def cmd_archive(args):
     date = args.date
     if not re.match(r"^\d{4}-\d{2}-\d{2}$", date):
@@ -2398,7 +2423,7 @@ def cmd_archive(args):
         print("File not found: %s" % _file_path(date), file=sys.stderr)
         return 2
     data = load_file(date)
-    if data["tasks"] and not all(t["status"] == "结束" for t in data["tasks"]):
+    if data["tasks"] and not all(_is_finished(t) for t in data["tasks"]):
         print("Unfinished tasks remain; refusing to force-archive (finish them or reopen first). "
               "You may edit the file manually.", file=sys.stderr)
         return 2
@@ -2429,7 +2454,7 @@ def cmd_postpone(args):
             return 2
         t["due"] = nd
     t["updated"] = _fmt(dt.datetime.now())
-    data["archived"] = all(x["status"] == "结束" for x in data["tasks"])
+    data["archived"] = all(_is_finished(x) for x in data["tasks"])
     save_file(date, data["archived"], data["tasks"])
     idx = build_index()
     print("Rescheduled: %s %s" % (t["id"], t["text"]))
@@ -3063,7 +3088,7 @@ def main():
     # 下列字段默认 None：更新已有任务时仅覆盖用户显式传入的项
     pa.add_argument("--importance", choices=["重要", "不重要"], default=None)
     pa.add_argument("--urgent", choices=["紧急", "不紧急"], default=None, help="urgency level")
-    pa.add_argument("--status", choices=["维护", "进行中", "结束", "待开始", "其他"], default=None)
+    pa.add_argument("--status", choices=sorted(STATUS_SET), default=None)
     pa.add_argument("--note", default=None)
     pa.add_argument("--blocker", default=None, help="the obstacle most likely to block me (optional; shown on the card)")
     pa.add_argument("--counter", default=None, help="counter-plan: if the blocker shows up, I will … (optional)")
@@ -3107,6 +3132,11 @@ def main():
     pw.add_argument("--force", action="store_true", help="ignore the unfinished-dependency check and force-start")
     pr = sub.add_parser("reopen", help="reopen (back to 待开始)")
     pr.add_argument("id")
+    pst = sub.add_parser("status", help="change a task's status (e.g. 已取消 / 阻塞 / 维护; advancing to 进行中/结束 runs the dependency & subtask checks)")
+    pst.add_argument("id")
+    pst.add_argument("status", choices=sorted(STATUS_SET),
+                     help="new status, e.g. 已取消 (terminal, inactive) / 阻塞 (unfinished, blocked)")
+    pst.add_argument("--force", action="store_true", help="ignore the dependency/subtask checks when advancing")
     ppo = sub.add_parser("postpone", aliases=["reschedule", "replan"],
                          help="reschedule: reset/clear the deadline (the second exit for overdue todos)")
     ppo.add_argument("id")
@@ -3134,8 +3164,8 @@ def main():
     par.add_argument("date")
     pl = sub.add_parser("list", help="list todos")
     pl.add_argument("--date", default="")
-    pl.add_argument("--state", choices=["维护", "进行中", "结束", "待开始", "其他",
-                                        "urgent", "overdue", "today", "all"], default="all")
+    pl.add_argument("--state", choices=sorted(STATUS_SET) + ["urgent", "overdue", "today", "all"],
+                    default="all")
     psh = sub.add_parser("show", help="view a task / a day file / a monthly archive (YYYY-MM)")
     psh.add_argument("id")
     pi = sub.add_parser("index", help="view / rebuild the index")
@@ -3169,6 +3199,7 @@ def main():
         "start": lambda a: cmd_start(a),
         "work": lambda a: cmd_work(a),
         "reopen": lambda a: cmd_reopen(a),
+        "status": lambda a: cmd_set_status(a),
         "postpone": lambda a: cmd_postpone(a),
         "reschedule": lambda a: cmd_postpone(a),
         "replan": lambda a: cmd_postpone(a),

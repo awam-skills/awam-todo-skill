@@ -87,6 +87,7 @@ command is `scripts/todo.py` (Python 3).
 | `check` | Read-only duplicate check |
 | `suggest-tags` | Read-only tag suggestion (JSON) |
 | `done` / `start` / `reopen` | Complete / mark in-progress / reopen (dependency guard on done & start) |
+| `status` | Generic status change: `status <id> <状态>` — e.g. 已取消 (cancelled, terminal) / 阻塞 (blocked, unfinished) / 维护 / 其他; advancing to 进行中/结束 runs the dependency & subtask checks |
 | `work` (`continue`) | Mark in-progress + open the workspace in the configured editor |
 | `postpone` (`reschedule`, `replan`) | Reschedule or clear the deadline (overdue exit #2) |
 | `dep` | View / set / append / remove / clear dependencies |
@@ -113,7 +114,7 @@ install location). Commands below are abbreviated as `python ...\todo.py`.
 | Layer | Language | Notes |
 |-------|----------|-------|
 | AI conversation in session | **Follows the user's language** | Reply in the language the user is speaking (Chinese ↔ English, etc.); when the user writes Chinese, reply in Chinese; when English, in English. Never force one fixed language. |
-| CLI / API output (`todo.py`, `server.py`) | **English, fixed** | All user-facing CLI output, argparse help, the tkinter dialog, web API error/message fields and startup logs are English. **Data values are exempt**: statuses (维护 / 进行中 / 结束 / 待开始 / 其他), importance (重要 / 不重要), urgency (紧急 / 不紧急), tags, view names and the storage-file keys (`状态:` / `重要:` / `内容:` …) remain literal Chinese runtime values — pass them to the CLI exactly as written and display them as-is. |
+| CLI / API output (`todo.py`, `server.py`) | **English, fixed** | All user-facing CLI output, argparse help, the tkinter dialog, web API error/message fields and startup logs are English. **Data values are exempt**: statuses (维护 / 进行中 / 结束 / 待开始 / 其他 / 已取消 / 阻塞), importance (重要 / 不重要), urgency (紧急 / 不紧急), tags, view names and the storage-file keys (`状态:` / `重要:` / `内容:` …) remain literal Chinese runtime values — pass them to the CLI exactly as written and display them as-is. |
 | Web UI (`web/index.html`) | **i18n: English default, switchable to Chinese** | Inline i18n word tables (zh/en) with **no external libraries**, offline-safe. Preference is stored in `localStorage` under `awam-todo:lang`; default `en`. A language selector sits in the top bar (English / 中文). Form `<select>` **values** submitted to the backend remain the Chinese data values; only displayed labels/options are translated. Data values from `index.json` are shown **as-is, never translated** — e.g. `pin_reason` is generated in English by the CLI's pinning logic and stays English in the UI. |
 
 Changing the UI language affects **display only** — never the data. The AI
@@ -294,7 +295,7 @@ and pass them to `add`; **unspecified values get their defaults**.
 | Task text | `--text` | Required; the core thing the user wants done | — |
 | Importance | `--importance` | 重要 / 不重要 | 不重要 |
 | Urgency | `--urgent` | 紧急 / 不紧急 | 不紧急 |
-| Status | `--status` | 维护 / 进行中 / 结束 / 待开始 / 其他 | 进行中 |
+| Status | `--status` | 维护 / 进行中 / 结束 / 待开始 / 其他 / 已取消 / 阻塞 (通用切换命令: `status <id> <状态>`) | 进行中 |
 | Due time | `--due` | Auto-parsed time (see mapping below); if not mentioned → no deadline | none |
 | Note | `--note` | Extra explanation from the user | empty |
 | Blocker (contingency) | `--blocker` | The obstacle most likely to stop me; optional; **shown directly on cards and lists** | empty |
@@ -686,7 +687,12 @@ anytime. Defaults are **suggested values**, not constraints.
   leave it empty (not persisted, not indexed) — never invented.
 - **ID**: `T-YYYYMMDD-NNN`, incremented within the day, auto-generated.
 - **Status**: `维护 [ ]` · `进行中 [~]` · `结束 [x]` · `待开始 [ ]` ·
-  `其他 [ ]`; new todos default to 「进行中」, `open` no longer appears.
+  `其他 [ ]` · `已取消 [-]` · `阻塞 [!]`; new todos default to 「进行中」,
+  `open` no longer appears. `已取消` (cancelled, set via `status <id> 已取消`)
+  is a terminal status like 「结束」: inactive, excluded from pins/urgent/
+  overdue, does not block dependents, counts toward the archive invariant —
+  but is **not** counted in `done`. `阻塞` (blocked, `status <id> 阻塞`) is an
+  unfinished status like 「待开始」 and appears in the `todo` bucket.
 - **Importance**: `重要` / `不重要` (default 「不重要」).
 - **Urgency**: `紧急` / `不紧急` (default 「不紧急」); a deadline within 24
   hours or already passed is still auto-treated as urgent.

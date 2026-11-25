@@ -109,6 +109,7 @@
   .mark{flex:0 0 32px;height:32px;border-radius:9px;display:flex;align-items:center;justify-content:center;color:#fff}
   .mark.progress{background:var(--info)} .mark.todo{background:#9aa4b5} .mark.done{background:var(--ok)}
   .mark.maint{background:var(--grace)} .mark.other{background:#8b7bdc}
+.mark.cancel{background:#6f7683} .mark.blocked{background:#d97706}
   .body{flex:1;min-width:0}
   .row1{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
   .id{font-size:11.5px;color:var(--muted);font-family:Consolas,monospace}
@@ -319,7 +320,7 @@
       <div class="field">
         <label><span id="lblStatus">状态</span> <span class="hint" id="hintStatus">(默认值可改)</span></label>
         <select id="f_status">
-          <option>进行中</option><option>待开始</option><option>结束</option><option>维护</option><option>其他</option>
+          <option>进行中</option><option>待开始</option><option>结束</option><option>维护</option><option>其他</option><option>已取消</option><option>阻塞</option>
         </select>
       </div>
       <div class="field">
@@ -415,8 +416,10 @@
 <div class="toast" id="toast"></div>
 <script>
 "use strict";
-const STATUS_CLASS = { "进行中":"progress", "待开始":"todo", "结束":"done", "维护":"maint", "其他":"other" };
-const STATUSES = ["进行中", "待开始", "结束", "维护", "其他"];
+const STATUS_CLASS = { "进行中":"progress", "待开始":"todo", "结束":"done", "维护":"maint", "其他":"other", "已取消":"cancel", "阻塞":"blocked" };
+const STATUSES = ["进行中", "待开始", "结束", "维护", "其他", "已取消", "阻塞"];
+// 终态：不再活跃（与后端 TERMINAL_STATUSES 一致）
+const TERMINAL_STATUSES = ["结束", "已取消"];
 const IMPORTANCES = ["重要", "不重要"];
 const URGENTS = ["紧急", "不紧急"];
 const LS_BASELINE = "awam-todo:baseline";
@@ -502,6 +505,7 @@ const I18N = {
     hint_title:"Notice",
     tab_all:"All", tab_today:"Today", tab_inprogress:"In progress", tab_todo:"Not started",
     tab_done:"Done", tab_urgent:"Urgent", tab_overdue:"Overdue",
+    tab_cancel:"Cancelled", tab_block:"Blocked",
     settings_nav:"Settings", settings_title:"Settings",
     cap_enabled:"Capture service: global hotkey reads clipboard → triage → confirm/execute",
     cap_enabled_on:"Enable capture service",
@@ -592,6 +596,7 @@ const I18N = {
     hint_title:"提示",
     tab_all:"全部", tab_today:"今日", tab_inprogress:"进行中", tab_todo:"待开始",
     tab_done:"已结束", tab_urgent:"紧急", tab_overdue:"逾期",
+    tab_cancel:"已取消", tab_block:"阻塞",
     settings_nav:"设置", settings_title:"设置",
     cap_enabled:"捕获服务：全局快捷键读取剪贴板 → 分诊 → 确认 / 执行",
     cap_enabled_on:"启用捕获服务",
@@ -620,8 +625,8 @@ function tr(key, vars){
 }
 // 数据值展示映射：value 永远是中文数据值，这里只负责显示译名
 const STATUS_LABELS = {
-  zh: {"进行中":"进行中","待开始":"待开始","结束":"结束","维护":"维护","其他":"其他"},
-  en: {"进行中":"In progress","待开始":"Not started","结束":"Done","维护":"Maintaining","其他":"Other"}
+  zh: {"进行中":"进行中","待开始":"待开始","结束":"结束","维护":"维护","其他":"其他","已取消":"已取消","阻塞":"阻塞"},
+  en: {"进行中":"In progress","待开始":"Not started","结束":"Done","维护":"Maintaining","其他":"Other","已取消":"Cancelled","阻塞":"Blocked"}
 };
 const IMPORTANCE_LABELS = { zh:{"重要":"重要","不重要":"不重要"}, en:{"重要":"Important","不重要":"Not important"} };
 const URGENT_LABELS = { zh:{"紧急":"紧急","不紧急":"不紧急"}, en:{"紧急":"Urgent","不紧急":"Not urgent"} };
@@ -728,12 +733,15 @@ const P = {
   inboxEmpty:'<path d="M3 12h5l2 3h4l2-3h5"/><path d="M5 5h14l2 7v7H3v-7z"/><path d="M9 15h6"/>',
   cursor:'<path d="M4 3l7 17 2.5-7.5L21 10 4 3z"/>',
   copy:'<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>',
+  x:'<path d="M18 6L6 18M6 6l12 12"/>',
+  ban:'<circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/>',
   gear:'<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 110-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 114 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 110 4h-.09a1.65 1.65 0 00-1.51 1z"/>'
 };
 function ic(name, cls){
   return '<svg class="ic' + (cls ? " " + cls : "") + '" viewBox="0 0 24 24" aria-hidden="true">' + (P[name] || "") + '</svg>';
 }
-const STATUS_ICON = { "进行中":"play", "待开始":"inbox", "结束":"check", "维护":"pause", "其他":"tag" };
+const STATUS_ICON = { "进行中":"play", "待开始":"inbox", "结束":"check", "维护":"pause", "其他":"tag",
+                      "已取消":"x", "阻塞":"ban" };
 // 视图：与后端 state 对齐；「今日」是一个视图，不作为默认入口（默认落在「全部」）
 // label 走 i18n 词表（t(t.key)），k 保持后端 state 原样
 const TABS = [
@@ -741,7 +749,9 @@ const TABS = [
   { k:"today",   key:"tab_today",      icon:"sun"   },
   { k:"进行中",   key:"tab_inprogress", icon:"play"  },
   { k:"待开始",   key:"tab_todo",      icon:"inbox" },
+  { k:"阻塞",     key:"tab_block",      icon:"ban"   },
   { k:"结束",     key:"tab_done",      icon:"check" },
+  { k:"已取消",   key:"tab_cancel",     icon:"x"     },
   { k:"urgent",  key:"tab_urgent",     icon:"zap"   },
   { k:"overdue", key:"tab_overdue",    icon:"alert" }
 ];
@@ -868,16 +878,20 @@ function render(){
 
 function localStats(){
   const now = Date.now();
-  const s = { total: store.items.length, in_progress:0, todo:0, done:0, urgent:0, today:0, overdue:0, stalled:0 };
+  const s = { total: store.items.length, in_progress:0, todo:0, done:0, cancelled:0, blocked:0,
+              urgent:0, today:0, overdue:0, stalled:0 };
   store.items.forEach(t => {
     const isU = (t.is_urgent !== undefined) ? t.is_urgent : localUrgent(t, now);
+    const finished = TERMINAL_STATUSES.indexOf(t.status) >= 0;
     if (t.status === "进行中") s.in_progress++;
     else if (t.status === "待开始") s.todo++;
     else if (t.status === "结束") s.done++;
-    if (isU && t.status !== "结束") s.urgent++;
+    else if (t.status === "已取消") s.cancelled++;
+    else if (t.status === "阻塞") s.blocked++;
+    if (isU && !finished) s.urgent++;
     if (t.overdue_days != null) s.overdue++;
     else if (t.stall_days != null) s.stalled++;
-    if (t.pin != null && t.status !== "结束") s.today++;
+    if (t.pin != null && !finished) s.today++;
   });
   return s;
 }
@@ -906,7 +920,8 @@ function renderWeek(){
 function renderNav(){
   const s = localStats();
   const counts = { "all": s.total, "today": s.today, "进行中": s.in_progress,
-                   "待开始": s.todo, "结束": s.done, "urgent": s.urgent, "overdue": s.overdue };
+                   "待开始": s.todo, "结束": s.done, "已取消": s.cancelled, "阻塞": s.blocked,
+                   "urgent": s.urgent, "overdue": s.overdue };
   const html = TABS.map(tab =>
     '<button class="navitem' + (tab.k === currentState ? " active" : "") + '" data-k="' + esc(tab.k) + '">' +
       ic(tab.icon, "sm") + '<span>' + esc(tr(tab.key)) + '</span>' +
@@ -1053,11 +1068,12 @@ function filteredItems(){
   const kw = currentKeyword.toLowerCase();
   const byId = itemsById();
   let list = store.items.filter(t => {
+    const finished = TERMINAL_STATUSES.indexOf(t.status) >= 0;
     if (currentState === "urgent"){
       const isU = (t.is_urgent!==undefined)?t.is_urgent:localUrgent(t,Date.now());
-      if (!isU || t.status === "结束") return false;
+      if (!isU || finished) return false;
     } else if (currentState === "today"){
-      if (t.pin == null || t.status === "结束") return false;
+      if (t.pin == null || finished) return false;
     } else if (currentState === "overdue"){
       if (t.overdue_days == null) return false;
     } else if (currentState !== "all" && t.status !== currentState){
@@ -1073,7 +1089,7 @@ function filteredItems(){
   });
   list.forEach(t => {
     t.__blocked = (t.blocked !== undefined ? t.blocked : false) ||
-      (t.depends_on||[]).some(d => { const dt = byId[d]; return !dt || dt.status !== "结束"; });
+      (t.depends_on||[]).some(d => { const dt = byId[d]; return !dt || TERMINAL_STATUSES.indexOf(dt.status) < 0; });
   });
   return sortItems(list);
 }
@@ -1093,7 +1109,8 @@ function renderList(){
 
 function renderCard(t){
   const cls = STATUS_CLASS[t.status] || "other";
-  const done = t.status === "结束";
+  // 终态（结束/已取消）卡片整体弱化展示
+  const done = TERMINAL_STATUSES.indexOf(t.status) >= 0;
   const isLocal = String(t.id).indexOf("local-") === 0;
   const pinCls = t.overdue_days != null ? "pin-overdue"
                : (t.stall_days != null ? "pin-stalled" : (t.pin != null ? "pin-due" : ""));

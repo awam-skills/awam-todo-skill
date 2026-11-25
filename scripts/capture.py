@@ -30,7 +30,7 @@ WM_HOTKEY = 0x0312
 WM_QUIT = 0x0012
 CF_UNICODETEXT = 13
 EXIT_NEEDS_CONFIRM = todo.EXIT_NEEDS_CONFIRM
-DIALOG_STATUSES = ("进行中", "待开始", "结束", "维护", "其他")
+DIALOG_STATUSES = ("进行中", "待开始", "结束", "维护", "其他", "已取消", "阻塞")
 
 
 def tk_available():

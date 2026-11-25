@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 awam-todo —— Web 前端后端服务。
@@ -13,7 +13,7 @@ awam-todo —— Web 前端后端服务。
 
 REST API：
   GET    /api/todos                       全部任务 + 索引摘要（可 ?state= / ?q= / ?tag= 过滤，含 revision 指纹）
-  GET    /api/todos?state=进行中           按状态过滤（进行中/待开始/结束/维护/其他/urgent/all）
+  GET    /api/todos?state=进行中           按状态过滤（进行中/待开始/结束/维护/其他/已取消/阻塞/urgent/all）
   GET    /api/todos?state=overdue          仅逾期任务（带 overdue_days）
   GET    /api/todos?state=today            今日要处理（逾期 / 停滞 / 今天到期，带 pin_reason）
   GET    /api/todos?q=关键词               按内容/备注/工作空间/预案关键词过滤
@@ -86,7 +86,9 @@ except Exception as e:  # noqa: BLE001
     _CAPTURE_IMPORT_ERR = e
 
 # 状态枚举（与 todo.py 一致）
-STATUSES = ["进行中", "待开始", "结束", "维护", "其他"]
+STATUSES = ["进行中", "待开始", "结束", "维护", "其他", "已取消", "阻塞"]
+# 终态（已翻篇、不再活跃）：与 todo.py 的 TERMINAL_STATUSES 一致
+TERMINAL_STATUSES = ("结束", "已取消")
 IMPORTANCES = ["重要", "不重要"]
 URGENTS = ["紧急", "不紧急"]
 
@@ -103,10 +105,10 @@ def _guard_conflicts(task, target_status):
     """返回推进到 target_status 时的硬检查冲突清单（依赖 + 子任务），无冲突返回空 list。
     与 todo.py 的 _guard_by_deps / _guard_children_done 语义一致，但返回结构化结果。"""
     conflicts = []
-    if target_status in ("进行中", "结束"):
+    if target_status in todo.ADVANCE_STATUSES:
         for did in (task.get("depends_on") or []):
             _, _, d = todo._find_task(did)
-            if d is None or d.get("status") != "结束":
+            if d is None or d.get("status") not in TERMINAL_STATUSES:
                 conflicts.append({
                     "kind": "deps",
                     "id": did,
@@ -116,7 +118,7 @@ def _guard_conflicts(task, target_status):
                 })
     if target_status == "结束":
         for _, c in todo._children_of(task.get("id")):
-            if c.get("status") != "结束":
+            if c.get("status") not in TERMINAL_STATUSES:
                 conflicts.append({
                     "kind": "children",
                     "id": c.get("id"),
@@ -328,10 +330,10 @@ def _next_id_in_memory(files, date):
 def _guard_in_memory(task, target_status, by_id):
     """基于内存任务表执行依赖 + 子任务守卫，返回冲突清单。"""
     conflicts = []
-    if target_status in ("进行中", "结束"):
+    if target_status in todo.ADVANCE_STATUSES:
         for did in (task.get("depends_on") or []):
             ent = by_id.get(did)
-            if ent is None or ent[1].get("status") != "结束":
+            if ent is None or ent[1].get("status") not in TERMINAL_STATUSES:
                 conflicts.append({
                     "kind": "deps",
                     "id": did,
@@ -341,7 +343,7 @@ def _guard_in_memory(task, target_status, by_id):
     if target_status == "结束":
         for ent in by_id.values():
             c = ent[1]
-            if c.get("parent") == task.get("id") and c.get("status") != "结束":
+            if c.get("parent") == task.get("id") and c.get("status") not in TERMINAL_STATUSES:
                 conflicts.append({
                     "kind": "children",
                     "id": c.get("id"),
@@ -579,11 +581,11 @@ class Handler(BaseHTTPRequestHandler):
         items = _list_all()
         if state and state != "all":
             if state == "urgent":
-                items = [i for i in items if i["is_urgent"] and i["status"] != "结束"]
+                items = [i for i in items if i["is_urgent"] and i["status"] not in TERMINAL_STATUSES]
             elif state == "overdue":
                 items = [i for i in items if i.get("overdue_days") is not None]
             elif state == "today":
-                items = [i for i in items if i.get("pin") is not None and i["status"] != "结束"]
+                items = [i for i in items if i.get("pin") is not None and i["status"] not in TERMINAL_STATUSES]
             else:
                 items = [i for i in items if i["status"] == state]
         if keyword:
@@ -684,7 +686,7 @@ class Handler(BaseHTTPRequestHandler):
         now = dt.datetime.now()
         t["status"] = status
         t["updated"] = todo._fmt(now)
-        all_done = all(x["status"] == "结束" for x in data["tasks"])
+        all_done = all(x["status"] in TERMINAL_STATUSES for x in data["tasks"])
         data["archived"] = all_done
         todo.save_file(date, data["archived"], data["tasks"])
         todo.build_index(now)
@@ -852,7 +854,7 @@ class Handler(BaseHTTPRequestHandler):
         for date in sorted(changed_dates):
             data = files[date]
             if data["tasks"]:
-                data["archived"] = all(x["status"] == "结束" for x in data["tasks"])
+                data["archived"] = all(x["status"] in TERMINAL_STATUSES for x in data["tasks"])
                 if not _file_content_matches(date, data["archived"], data["tasks"]):
                     todo.save_file(date, data["archived"], data["tasks"])
                     wrote_dates.append(date)
@@ -957,7 +959,7 @@ def _do_update(tid, body, now, force):
         if conflicts and not force:
             return 409, {"conflicts": conflicts}
     t["updated"] = todo._fmt(now)
-    all_done = all(x["status"] == "结束" for x in data["tasks"])
+    all_done = all(x["status"] in TERMINAL_STATUSES for x in data["tasks"])
     data["archived"] = all_done
     todo.save_file(date, data["archived"], data["tasks"])
     todo.build_index(now)
